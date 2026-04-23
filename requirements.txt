@@ -1,0 +1,14 @@
+aiofiles
+aiosqlite
+apscheduler
+beautifulsoup4
+docker
+fastapi
+httpx
+pillow
+playwright
+python-multipart
+python-jose[cryptography]
+passlib
+readability-lxml
+uvicorn

@@ -1,0 +1,273 @@
+<template>
+  <div class="flex" :class="[message.role === 'user' ? 'justify-end' : 'justify-start']">
+    <div
+      class="max-w-[85%] rounded-2xl px-5 py-3 shadow-sm"
+      :class="{
+        'bg-blue-600 text-white': message.role === 'user',
+        'bg-white text-gray-800 border border-gray-100': message.role !== 'user',
+        'italic text-gray-500 text-sm bg-gray-50': message.type === 'reasoning',
+        'bg-yellow-50 border border-yellow-200 text-yellow-800': message.type === 'tool_call',
+        'bg-purple-50 border border-purple-200 text-purple-800': message.type === 'tool_result',
+      }"
+    >
+      <!-- 推理消息 -->
+      <template v-if="message.type === 'reasoning'">
+        <div class="flex items-center gap-2 cursor-pointer select-none" @click="toggleCollapse">
+          <component :is="collapsed ? ChevronRightIcon : ChevronDownIcon" class="w-4 h-4 text-gray-500" />
+          <LightBulbIcon class="w-4 h-4 text-gray-500" />
+          <span class="text-sm font-medium text-gray-600">推理过程</span>
+          <!-- <span v-if="message.isStreaming" class="text-xs text-gray-400 ml-2 animate-pulse">生成中...</span> -->
+        </div>
+        <div v-if="!collapsed" class="mt-2 whitespace-pre-wrap break-words text-xs text-gray-500 leading-relaxed">
+          {{ message.content }}
+          <!-- <span v-if="message.isStreaming" class="inline-block w-2 h-3 ml-1 bg-gray-400 animate-pulse"></span> -->
+        </div>
+      </template>
+
+      <!-- 工具调用消息 -->
+      <template v-else-if="message.type === 'tool_call'">
+        <div class="flex items-center gap-2 cursor-pointer select-none" @click="toggleCollapse">
+          <component :is="collapsed ? ChevronRightIcon : ChevronDownIcon" class="w-4 h-4" />
+          <WrenchScrewdriverIcon class="w-4 h-4" />
+          <span class="text-sm font-medium">调用工具: {{ message.toolCallData?.name || JSON.parse(message.content).name }}</span>
+        </div>
+        <div v-if="!collapsed" class="mt-2">
+          <pre class="text-xs overflow-auto">{{
+            JSON.stringify(message.toolCallData?.args || JSON.parse(message.content).args, null, 2)
+          }}</pre>
+        </div>
+      </template>
+
+      <!-- 工具结果消息 -->
+      <template v-else-if="message.type === 'tool_result'">
+        <div class="flex items-center gap-2 cursor-pointer select-none" @click="toggleCollapse">
+          <component :is="collapsed ? ChevronRightIcon : ChevronDownIcon" class="w-4 h-4" />
+          <CheckCircleIcon class="w-4 h-4 text-green-600" />
+          <span class="text-sm font-medium">工具结果</span>
+        </div>
+        <div v-if="!collapsed" class="mt-2 text-sm whitespace-pre-wrap break-words">
+          {{ message.content }}
+        </div>
+      </template>
+
+      <template v-else>
+        <div v-if="message.role === 'assistant' && message.type === 'message'" class="break-words">
+          <MarkdownRenderer :content="message.content"></MarkdownRenderer>
+          <span v-if="message.isStreaming" class="inline-block w-2 h-4 ml-1 bg-current animate-pulse align-middle"></span>
+        </div>
+        <div v-else class="whitespace-pre-wrap break-words">
+          {{ message.content }}
+          <span v-if="message.isStreaming" class="inline-block w-2 h-4 ml-1 bg-current animate-pulse"></span>
+        </div>
+      </template>
+      <!-- 附件列表（助手消息且存在附件 ID） -->
+      <div
+        v-if="(message.attachments_file_id?.length || message.attachments?.length)"
+        class="mt-3 pt-2 border-t border-gray-200"
+      >
+        <div class="text-xs font-medium text-gray-600 mb-1">附件</div>
+        <div v-for="fileId in message.attachments_file_id" :key="fileId" class="flex items-center gap-2 text-sm">
+          
+          <FileIcon class="w-4 h-4 text-gray-500" />
+          <span class="flex-1 truncate text-gray-700">
+            {{ fileInfoMap[fileId]?.original_filename || fileId }}
+          </span>
+          <button
+            @click="previewFile(fileId)"
+            class="px-2 py-1 text-xs bg-blue-50 text-blue-600 rounded hover:bg-blue-100"
+            :disabled="loadingMap[fileId]"
+          >
+            预览
+          </button>
+          <button
+            @click="downloadFile(fileId)"
+            class="px-2 py-1 text-xs bg-gray-100 text-gray-700 rounded hover:bg-gray-200"
+            :disabled="loadingMap[fileId]"
+          >
+            下载
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
+  <!-- 文件预览模态框 -->
+  <div
+    v-if="previewVisible"
+    class="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-50"
+    @click.self="closePreview"
+  >
+    <div class="bg-white rounded-lg shadow-xl w-4/5 h-4/5 flex flex-col">
+      <div class="flex justify-between items-center px-4 py-2 border-b">
+        <h3 class="text-lg font-medium">
+          {{ previewFileInfo?.original_filename || '文件预览' }}
+        </h3>
+        <button @click="closePreview" class="text-gray-500 hover:text-gray-700">
+          <XMarkIcon class="w-5 h-5" />
+        </button>
+      </div>
+      <div class="flex-1 p-2 overflow-auto">
+        <iframe
+          v-if="previewUrl"
+          :src="previewUrl"
+          class="w-full h-full border-0"
+          frameborder="0"
+        ></iframe>
+        <div v-else class="flex items-center justify-center h-full text-gray-500">
+          无法预览此文件类型，请下载后查看
+        </div>
+      </div>
+      <!-- <div class="px-4 py-2 border-t flex justify-end">
+        <button
+          @click="downloadPreviewFile"
+          class="px-3 py-1 bg-blue-600 text-white rounded hover:bg-blue-700"
+        >
+          下载
+        </button>
+        <button @click="closePreview" class="ml-2 px-3 py-1 bg-gray-200 rounded hover:bg-gray-300">
+          关闭
+        </button>
+      </div> -->
+    </div>
+  </div>
+</template>
+<script setup lang="ts">
+import { ref, reactive, onMounted, onUnmounted, watch } from 'vue';
+import {
+  WrenchScrewdriverIcon,
+  CheckCircleIcon,
+  LightBulbIcon,
+  DocumentIcon as FileIcon,
+  ChevronRightIcon,
+  ChevronDownIcon,
+  XMarkIcon,
+} from '@heroicons/vue/24/outline';
+import type { Message, FileInfo } from '@/types';
+import MarkdownRenderer from './MarkdownRenderer.vue';
+import { filesApi } from '@/api/files';
+import { useSessionStore } from '@/stores/session';
+
+const props = defineProps<{ message: Message }>();
+const sessionStore = useSessionStore();
+
+// 折叠状态（独立于消息对象）
+const collapsed = ref(true);
+
+// 根据消息类型和流式状态决定初始折叠
+function initCollapsed() {
+  // 推理消息：默认展开
+  if (props.message.type === 'reasoning') {
+    return false;
+  }
+  // 工具调用和工具结果：默认折叠
+  if (props.message.type === 'tool_call' || props.message.type === 'tool_result') {
+    return true;
+  }
+  // 其他类型无折叠功能
+  return false;
+}
+
+// 初始化折叠状态
+collapsed.value = initCollapsed();
+
+function toggleCollapse() {
+  // 仅对可折叠类型生效
+  if (['reasoning', 'tool_call', 'tool_result'].includes(props.message.type)) {
+    collapsed.value = !collapsed.value;
+  }
+}
+
+const fileInfoMap = reactive<Record<string, FileInfo>>({});
+const loadingMap = reactive<Record<string, boolean>>({});
+
+// 预览模态框状态
+const previewVisible = ref(false);
+const previewUrl = ref<string | null>(null);
+const previewFileInfo = ref<FileInfo | null>(null);
+
+// 关闭预览并释放 blob URL
+function closePreview() {
+  if (previewUrl.value) {
+    URL.revokeObjectURL(previewUrl.value);
+    previewUrl.value = null;
+  }
+  previewVisible.value = false;
+  previewFileInfo.value = null;
+}
+
+// 下载当前预览的文件
+async function downloadPreviewFile() {
+  if (!previewFileInfo.value) return;
+  await downloadFile(previewFileInfo.value.file_id);
+}
+
+// 修改原来的 previewFile 函数
+async function previewFile(fileId: string) {
+  if (!sessionStore.currentSessionId) return;
+  // 先获取文件信息（用于显示文件名）
+  let fileInfo = fileInfoMap[fileId];
+  if (!fileInfo) {
+    try {
+      const { data } = await filesApi.getFileInfo(sessionStore.currentSessionId, fileId);
+      fileInfo = data;
+      fileInfoMap[fileId] = data;
+    } catch (error) {
+      console.error('获取文件信息失败:', error);
+      alert('获取文件信息失败');
+      return;
+    }
+  }
+  previewFileInfo.value = fileInfo;
+
+  try {
+    const response = await filesApi.getFileBlob(sessionStore.currentSessionId, fileId);
+    const blob = response.data;
+    // 如果后端返回的 MIME 类型不准确，可以根据文件扩展名补充，此处直接使用 blob.type
+    const url = URL.createObjectURL(blob);
+    previewUrl.value = url;
+    previewVisible.value = true;
+  } catch (error) {
+    console.error('预览失败:', error);
+    alert('预览失败，请稍后重试');
+  }
+}
+
+// 下载函数保持不变（但使用原始 blob）
+async function downloadFile(fileId: string) {
+  if (!sessionStore.currentSessionId) return;
+  const fileName = fileInfoMap[fileId]?.original_filename;
+  try {
+    await filesApi.download(sessionStore.currentSessionId, fileId, fileName);
+  } catch (error) {
+    console.error('下载失败:', error);
+    alert('下载失败');
+  }
+}
+
+// 获取文件信息（原有逻辑）
+async function fetchFileInfo(fileId: string) {
+  if (fileInfoMap[fileId] || loadingMap[fileId]) return;
+  if (!sessionStore.currentSessionId) return;
+  loadingMap[fileId] = true;
+  try {
+    const { data } = await filesApi.getFileInfo(sessionStore.currentSessionId, fileId);
+    fileInfoMap[fileId] = data;
+  } catch (error) {
+    console.error('获取文件信息失败:', error);
+  } finally {
+    loadingMap[fileId] = false;
+  }
+}
+
+onMounted(() => {
+  if (props.message.attachments_file_id) {
+    props.message.attachments_file_id.forEach(fetchFileInfo);
+  }
+});
+
+// 组件卸载时确保释放预览 URL
+onUnmounted(() => {
+  if (previewUrl.value) {
+    URL.revokeObjectURL(previewUrl.value);
+  }
+});
+</script>

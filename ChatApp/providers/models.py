@@ -1,0 +1,53 @@
+
+# 所有模型都应该支持 function_calling
+supported_models={
+    "default":{
+        "provider":"deepseek",
+        "model":"deepseek-reasoner",
+        "thinking":True,
+        "accept_image":False,
+        "accept_audio":False,
+    },
+    "deepseek-v3.2-thinking":{
+        "provider":"deepseek",
+        "model":"deepseek-reasoner",
+        "thinking":True,
+        "accept_image":False,
+        "accept_audio":False,
+    },
+    "qwen3.6-plus-thinking":{
+        "provider":"openrouter",
+        "model":"qwen/qwen3.6-plus",
+        "thinking":True,
+        "accept_image":True,
+        "accept_audio":False,
+    },
+    "qwen3.5-flash-thinking":{
+        "provider":"openrouter",
+        "model":"qwen/qwen3.5-flash-02-23",
+        "thinking":True,
+        "accept_image":True,
+        "accept_audio":False,
+    },
+    "kimi-k2.6-thinking":{
+        "provider":"openrouter",
+        "model":"moonshotai/kimi-k2.6",
+        "thinking":True,
+        "accept_image":True,
+        "accept_audio":False,
+    },
+    "glm-5.1-thinking":{
+        "provider":"openrouter",
+        "model":"z-ai/glm-5.1",
+        "thinking":True,
+        "accept_image":False,
+        "accept_audio":False,
+    },
+    "mino-v2.5":{
+        "provider":"openrouter",
+        "model":"xiaomi/mimo-v2.5",
+        "thinking":True,
+        "accept_image":True,
+        "accept_audio":True,
+    }
+}

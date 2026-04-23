@@ -1,0 +1,29 @@
+# python
+__pycache__/
+*.py[cod]
+*.so
+.Python
+env/
+venv/
+.venv/
+dist/
+build/
+*.egg-info/
+
+# nodejs
+node_modules/
+npm-debug.log
+yarn-error.log
+.env
+dist/
+build/
+
+#vscode
+.vscode/
+
+chat.db
+uploads/*
+*.sh
+test.py
+api-docs.md
+TODO.md

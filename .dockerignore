@@ -1,0 +1,83 @@
+# -------------------------------------------
+# 版本控制
+# -------------------------------------------
+.git
+.gitignore
+.gitattributes
+
+# -------------------------------------------
+# Python 相关
+# -------------------------------------------
+# 虚拟环境目录（容器内会重新创建依赖）
+venv/
+env/
+.venv/
+.env/
+ENV/
+env.bak/
+venv.bak/
+
+# Python 缓存与编译文件
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+
+# 分发/打包目录
+build/
+dist/
+*.egg-info/
+*.egg
+
+# 单元测试与覆盖率
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+*.cover
+
+# 开发环境配置文件（避免覆盖容器内配置）
+.env.local
+.env.*.local
+.env.development
+.env.test
+.env.production
+
+# 日志与数据库文件
+*.db
+*.log
+*.sqlite3
+db.sqlite3
+
+# 编辑器配置
+.vscode/
+*.swp
+*.swo
+
+# 操作系统生成的文件
+.DS_Store
+Thumbs.db
+
+# -------------------------------------------
+# 文档与测试文件（可按需保留/忽略）
+# -------------------------------------------
+README.md
+LICENSE
+
+# 如果测试文件需要被容器使用，请删除上面相关行
+
+# -------------------------------------------
+# Docker 相关文件（通常不需要在镜像内）
+# -------------------------------------------
+Dockerfile
+.dockerignore
+docker-compose.yml
+docker-compose.*.yml
+.gitlab-ci.yml
+.github/
+
+# 其他文件
+uploads/*
+*.sh
+Frontend/
+sandbox-test.py
