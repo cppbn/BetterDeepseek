@@ -68,6 +68,8 @@ nginx -t && systemctl reload nginx
 ```
 
 ## 后端部署
+
+### 前置条件
 LLM 通过 Docker 创建容器来执行代码，因此先制作 python3.12-workspace 镜像。
 
 ```dockerfile
@@ -121,7 +123,7 @@ RUN pip install --no-cache-dir --upgrade pip && \
 docker build -t python3.12-workspace .
 ```
 
-开始部署
+## 源码部署
 
 ```bash
 git clone https://github.com/cppbn/BetterDeepseek.git
