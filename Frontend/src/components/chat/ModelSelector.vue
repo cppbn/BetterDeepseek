@@ -79,7 +79,8 @@ function formatModelName(key: string): string {
   // 将 key 转换为更友好的显示名称
   const nameMap: Record<string, string> = {
     'default': 'DeepSeek (默认)',
-    'deepseek-v3.2-thinking': 'DeepSeek V3.2',
+    'deepseek-v4-flash-thinking': 'DeepSeek V4 Flash',
+    'deepseek-v4-pro-thinking': 'DeepSeek V4 Pro',
     'qwen3.6-plus-thinking': 'Qwen 3.6 Plus',
     'qwen3.5-flash-thinking': 'Qwen 3.5 Flash',
     'kimi-k2.6-thinking': 'Kimi K2.6',

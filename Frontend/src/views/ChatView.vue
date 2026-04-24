@@ -1,7 +1,6 @@
 <template>
   <AppLayout>
     <div class="flex-1 flex flex-col h-full">
-      <!-- 顶部工具栏：模型选择 -->
       <div class="border-b border-gray-200 bg-white px-4 py-2">
         <div class="max-w-3xl mx-auto">
           <ModelSelector
@@ -11,7 +10,6 @@
           />
         </div>
       </div>
-
       <MessageList
         :messages="sessionStore.messages"
         :is-loading="sessionStore.isLoadingMessages"
@@ -19,8 +17,10 @@
       />
       <ChatInput
         :session-id="sessionStore.currentSessionId"
+        :is-streaming="isStreaming"
         :disabled="!sessionStore.currentSessionId"
         @send="handleSendMessage"
+        @stop="stop"
       />
     </div>
   </AppLayout>
@@ -41,7 +41,7 @@ import type { ModelsResponse } from '@/types';
 const route = useRoute();
 const router = useRouter();
 const sessionStore = useSessionStore();
-const { sendMessage, isStreaming } = useChatStream();
+const { sendMessage, isStreaming, stop } = useChatStream();
 
 const models = ref<ModelsResponse | null>(null);
 const currentModel = ref<string>('default');

@@ -25,8 +25,7 @@ class DeepSeekProvider(LLMProvider):
         if tools:
             payload["tools"] = tools
             payload["tool_choice"] = "auto"
-        # 支持 thinking 配置
-        if kwargs.get("enable_thinking"):
+        if thinking:
             payload["extra_body"] = {"thinking": {"type": "enabled"}}
         return payload
 

@@ -8,9 +8,16 @@ supported_models={
         "accept_image":False,
         "accept_audio":False,
     },
-    "deepseek-v3.2-thinking":{
+    "deepseek-v4-flash-thinking":{
         "provider":"deepseek",
-        "model":"deepseek-reasoner",
+        "model":"deepseek-v4-flash",
+        "thinking":True,
+        "accept_image":False,
+        "accept_audio":False,
+    },
+    "deepseek-v4-pro-thinking":{
+        "provider":"deepseek",
+        "model":"deepseek-v4-pro",
         "thinking":True,
         "accept_image":False,
         "accept_audio":False,

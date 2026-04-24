@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import StreamingResponse, Response
 import aiosqlite
 import httpx
@@ -37,6 +37,7 @@ router = APIRouter(prefix="/api/sessions/{session_id}/chat", tags=["chat"])
 async def chat_stream(
     session_id: str,
     request: ChatRequest,
+    fastapi_request: Request, 
     current_user: dict = Depends(get_current_user),
     db: aiosqlite.Connection = Depends(get_db)
 ):
@@ -145,6 +146,11 @@ async def chat_stream(
 
     async def event_generator():
         while True:
+            # 每次新一轮 LLM 调用前检查客户端是否断开
+            if await fastapi_request.is_disconnected():
+                logger.info(f"Client disconnected for session {session_id}")
+                break
+
             reasoning_content = ""
             content = ""
 
@@ -179,6 +185,10 @@ async def chat_stream(
 
             # 处理工具调用
             if current_tool_calls:
+                # 检查是否断开，避免后续无意义操作
+                if await fastapi_request.is_disconnected():
+                    return
+                
                 assistant_msg = {
                     "role": "assistant",
                     "reasoning_content": reasoning_content if reasoning_content else None,

@@ -12,6 +12,7 @@ api_key_header = APIKeyHeader(name="X-Admin-Key", auto_error=False)
 ALLOWED_KEYS = {
     "DEEPSEEK_API_KEY",
     "TAVILY_API_KEY",
+    "OPENROUTER_API_KEY",
     "SYSTEM_PROMPT_DEFAULT",
     "SYSTEM_PROMPT_WITH_CODE_EXEC",
 }

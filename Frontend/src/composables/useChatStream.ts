@@ -6,6 +6,7 @@ import { filesApi } from '@/api/files';
 export function useChatStream() {
   const sessionStore = useSessionStore();
   const isStreaming = ref(false);
+  const abortController = ref<AbortController | null>(null);
 
   async function sendMessage(sessionId: string, request: ChatRequest) {
     if (isStreaming.value) return;
@@ -34,6 +35,8 @@ export function useChatStream() {
     };
     sessionStore.addMessage(assistantMsg);
 
+    const controller = new AbortController();
+    abortController.value = controller;
     isStreaming.value = true;
 
     try {
@@ -43,6 +46,7 @@ export function useChatStream() {
         enable_search: request.enable_search ?? true,
         enable_code_exec: request.enable_code_exec ?? true,
         model: request.model,
+        signal: controller.signal,
       });
 
       for await (const event of generator) {
@@ -51,7 +55,7 @@ export function useChatStream() {
     } catch (error) {
       console.error('Stream error:', error);
       sessionStore.updateLastMessage((msg) => {
-        msg.content = '发生错误，请重试。';
+        msg.content += '\n\n发生错误，请重试。';
         msg.isStreaming = false;
       });
     } finally {
@@ -60,9 +64,6 @@ export function useChatStream() {
       sessionStore.updateLastMessage((msg) => {
         msg.isStreaming = false;
       });
-      // 注意：不再调用 fetchMessages，避免覆盖本地已累积的完整内容
-      // 如果后端要求同步，可以在后台静默拉取，但不影响当前显示
-      // await sessionStore.fetchMessages(sessionId);
     }
   }
 
@@ -149,5 +150,11 @@ export function useChatStream() {
     }
   }
 
-  return { sendMessage, isStreaming };
+  function stop() {
+    if (abortController.value) {
+      abortController.value.abort();
+    }
+  }
+
+  return { sendMessage, isStreaming, stop };
 }

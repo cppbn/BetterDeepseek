@@ -93,7 +93,18 @@
               />
             </div>
           </div>
+
           <button
+            v-if="isStreaming"
+            @click="$emit('stop')"
+            class="p-3 rounded-xl bg-red-600 text-white hover:bg-red-700 focus:outline-none focus:ring-2 focus:ring-red-500 focus:ring-offset-2 transition-colors shadow-sm"
+            title="停止生成"
+          >
+            <StopIcon class="w-5 h-5" />
+          </button>
+
+          <button
+            v-else
             @click="sendMessage"
             :disabled="!canSend || disabled"
             class="p-3 rounded-xl bg-blue-600 text-white hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 disabled:opacity-50 transition-colors shadow-sm"
@@ -120,6 +131,7 @@ import {
   GlobeAltIcon,
   CodeBracketIcon,
   DocumentArrowUpIcon,
+  StopIcon,
 } from '@heroicons/vue/24/outline';
 import FileUploadButton from './FileUploadButton.vue';
 import { filesApi } from '@/api/files';
@@ -136,10 +148,12 @@ interface SelectedFile {
 const props = defineProps<{
   sessionId: string | null;
   disabled?: boolean;
+  isStreaming?: boolean;
 }>();
 
 const emit = defineEmits<{
   (e: 'send', message: string, attachments?: string[], enableSearch?: boolean, enableCodeExec?: boolean): void;
+  (e: 'stop'): void; 
 }>();
 
 const inputText = ref('');
