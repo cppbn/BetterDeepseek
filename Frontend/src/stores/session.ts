@@ -6,8 +6,34 @@ import { type Session, type Message, type FileInfo } from '@/types';
 export const useSessionStore = defineStore('session', () => {
   const sessions = ref<Session[]>([]);
   const currentSessionId = ref<string | null>(null);
-  const messages = ref<Message[]>([]);
+  const messagesMap = ref<Record<string, Message[]>>({});
   const isLoadingMessages = ref(false);
+
+  const currentMessages = computed(() => {
+    if (!currentSessionId.value) return [];
+    return messagesMap.value[currentSessionId.value] || [];
+  });
+
+  function ensureSessionMessages(sessionId: string) {
+    if (!messagesMap.value[sessionId]) {
+      messagesMap.value[sessionId] = [];
+    }
+  }
+
+  function addMessageToSession(sessionId: string, message: Message) {
+    ensureSessionMessages(sessionId);
+    messagesMap.value[sessionId].push(message);
+  }
+
+  function updateLastMessageInSession(
+    sessionId: string,
+    updater: (msg: Message) => void
+  ) {
+    const msgs = messagesMap.value[sessionId];
+    if (msgs && msgs.length > 0) {
+      updater(msgs[msgs.length - 1]);
+    }
+  }
 
   async function fetchSessions() {
     const { data } = await apiClient.get<Session[]>('/sessions');
@@ -22,9 +48,9 @@ export const useSessionStore = defineStore('session', () => {
 
   async function deleteSession(sessionId: string) {
     await apiClient.delete(`/sessions/${sessionId}`);
+    delete messagesMap.value[sessionId];
     if (currentSessionId.value === sessionId) {
       currentSessionId.value = null;
-      messages.value = [];
     }
     await fetchSessions();
   }
@@ -32,17 +58,26 @@ export const useSessionStore = defineStore('session', () => {
   async function fetchMessages(sessionId: string) {
     isLoadingMessages.value = true;
     try {
-      const { data } = await apiClient.get<Message[]>(`/sessions/${sessionId}/messages`);
-      messages.value = data;
+      const { data } = await apiClient.get<Message[]>(
+        `/sessions/${sessionId}/messages`
+      );
+      messagesMap.value[sessionId] = data;
+
       await Promise.all(
-        messages.value
-            .filter(m => m.role === 'user' || (m.role === 'assistant' && m.type === 'tool_call'))
-            .map(async (message) => {
-                const { data } = await apiClient.get<FileInfo[]>(`/sessions/${sessionId}/messages/${message.id}/attachments`);
-                message.attachments = data;
-                message.attachments_file_id = message.attachments.map(f => f.file_id);
-            })
-);
+        data
+          .filter(
+            (m) =>
+              m.role === 'user' ||
+              (m.role === 'assistant' && m.type === 'tool_call')
+          )
+          .map(async (message) => {
+            const { data: attachments } = await apiClient.get<FileInfo[]>(
+              `/sessions/${sessionId}/messages/${message.id}/attachments`
+            );
+            message.attachments = attachments;
+            message.attachments_file_id = attachments.map((f) => f.file_id);
+          })
+      );
     } finally {
       isLoadingMessages.value = false;
     }
@@ -54,31 +89,25 @@ export const useSessionStore = defineStore('session', () => {
   }
 
   function setCurrentSession(sessionId: string) {
+    if (currentSessionId.value === sessionId) return;
     currentSessionId.value = sessionId;
-    fetchMessages(sessionId);
-  }
-
-  function addMessage(message: Message) {
-    messages.value.push(message);
-  }
-
-  function updateLastMessage(updater: (msg: Message) => void) {
-    if (messages.value.length > 0) {
-      updater(messages.value[messages.value.length - 1]);
+    if (!messagesMap.value[sessionId]) {
+      fetchMessages(sessionId);
     }
   }
 
   return {
     sessions,
     currentSessionId,
-    messages,
     isLoadingMessages,
+    currentMessages,
+    messagesMap,
     fetchSessions,
     createSession,
     deleteSession,
     fetchMessages,
     setCurrentSession,
-    addMessage,
-    updateLastMessage,
+    addMessageToSession,
+    updateLastMessageInSession,
   };
 });

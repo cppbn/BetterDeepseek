@@ -11,7 +11,7 @@
         </div>
       </div>
       <MessageList
-        :messages="sessionStore.messages"
+        :messages="sessionStore.currentMessages"
         :is-loading="sessionStore.isLoadingMessages"
         class="flex-1"
       />
@@ -99,7 +99,7 @@ async function handleSendMessage(
     attachments_file_id: attachments,
     enable_search: enableSearch ?? true,
     enable_code_exec: enableCodeExec ?? true,
-    model: currentModel.value, // 传递选中的模型
+    model: currentModel.value,
   });
 }
 </script>

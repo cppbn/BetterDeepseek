@@ -8,39 +8,45 @@ export function useChatStream() {
   const isStreaming = ref(false);
   const abortController = ref<AbortController | null>(null);
 
+  function getNextIdx(sessionId: string): number {
+    const msgs = sessionStore.messagesMap[sessionId] || [];
+    return msgs.length > 0 ? msgs[msgs.length - 1].idx + 1 : 0;
+  }
+
   async function sendMessage(sessionId: string, request: ChatRequest) {
     if (isStreaming.value) return;
 
-    // 用户消息
+    // 固定当前流的会话 ID
+    const streamSessionId = sessionId;
+
     const userMsg: Message = {
       id: Date.now(),
-      idx: sessionStore.messages.length > 0 ? sessionStore.messages[sessionStore.messages.length - 1].idx + 1 : 0,
+      idx: getNextIdx(streamSessionId),
       role: 'user',
       type: 'message',
       content: request.message,
       created_at: new Date().toISOString(),
       attachments_file_id: request.attachments_file_id,
     };
-    sessionStore.addMessage(userMsg);
+    sessionStore.addMessageToSession(streamSessionId, userMsg);
 
-    // 占位助手消息
     const assistantMsg: Message = {
       id: Date.now() + 1,
-      idx: userMsg.idx + 1, // 确保 idx 递增
+      idx: userMsg.idx + 1,
       role: 'assistant',
       type: 'reasoning',
       content: '',
       created_at: new Date().toISOString(),
       isStreaming: true,
     };
-    sessionStore.addMessage(assistantMsg);
+    sessionStore.addMessageToSession(streamSessionId, assistantMsg);
 
     const controller = new AbortController();
     abortController.value = controller;
     isStreaming.value = true;
 
     try {
-      const generator = streamChat(sessionId, {
+      const generator = streamChat(streamSessionId, {
         message: request.message,
         attachments_file_id: request.attachments_file_id,
         enable_search: request.enable_search ?? true,
@@ -50,43 +56,40 @@ export function useChatStream() {
       });
 
       for await (const event of generator) {
-        handleStreamEvent(event);
+        handleStreamEvent(streamSessionId, event);
       }
-    } catch (error) {
+    } catch (error: any) {
       if (error?.name === 'AbortError') {
-        // 用户主动取消，追加提示（可选）
-        sessionStore.updateLastMessage((msg) => {
+        sessionStore.updateLastMessageInSession(streamSessionId, (msg) => {
           if (!msg.content.endsWith('（已停止）')) {
             msg.content += '（已停止）';
           }
         });
       } else {
         console.error('Stream error:', error);
-        sessionStore.updateLastMessage((msg) => {
+        sessionStore.updateLastMessageInSession(streamSessionId, (msg) => {
           msg.content = '发生错误，请重试。';
           msg.isStreaming = false;
         });
       }
     } finally {
-      isStreaming.value = false;
-      // 标记流式结束
-      sessionStore.updateLastMessage((msg) => {
+      sessionStore.updateLastMessageInSession(streamSessionId, (msg) => {
         msg.isStreaming = false;
       });
+      isStreaming.value = false;
     }
   }
 
-  function handleStreamEvent(event: StreamEvent) {
+  function handleStreamEvent(streamSessionId: string, event: StreamEvent) {
     switch (event.type) {
       case 'content':
-        sessionStore.updateLastMessage((msg) => {
-          if(msg.type === "message"){
+        sessionStore.updateLastMessageInSession(streamSessionId, (msg) => {
+          if (msg.type === 'message') {
             msg.content += event.content;
-          }
-          else{
-            sessionStore.addMessage({
+          } else {
+            sessionStore.addMessageToSession(streamSessionId, {
               id: Date.now(),
-              idx: sessionStore.messages[sessionStore.messages.length - 1].idx,
+              idx: msg.idx,
               role: 'assistant',
               type: 'message',
               content: event.content,
@@ -96,14 +99,13 @@ export function useChatStream() {
         });
         break;
       case 'reasoning_content':
-        sessionStore.updateLastMessage((msg) => {
-          if(msg.type === "reasoning"){
+        sessionStore.updateLastMessageInSession(streamSessionId, (msg) => {
+          if (msg.type === 'reasoning') {
             msg.content += event.content;
-          }
-          else{
-            sessionStore.addMessage({
+          } else {
+            sessionStore.addMessageToSession(streamSessionId, {
               id: Date.now(),
-              idx: sessionStore.messages[sessionStore.messages.length - 1].idx,
+              idx: msg.idx,
               role: 'assistant',
               type: 'reasoning',
               content: event.content,
@@ -113,9 +115,9 @@ export function useChatStream() {
         });
         break;
       case 'tool_call':
-        sessionStore.addMessage({
+        sessionStore.addMessageToSession(streamSessionId, {
           id: Date.now(),
-          idx: sessionStore.messages[sessionStore.messages.length - 1].idx,
+          idx: getNextIdx(streamSessionId),
           role: 'assistant',
           type: 'tool_call',
           content: `调用工具: ${event.content.name}`,
@@ -124,9 +126,9 @@ export function useChatStream() {
         });
         break;
       case 'tool_result':
-        sessionStore.addMessage({
+        sessionStore.addMessageToSession(streamSessionId, {
           id: Date.now(),
-          idx: sessionStore.messages[sessionStore.messages.length - 1].idx,
+          idx: getNextIdx(streamSessionId),
           role: 'tool',
           type: 'tool_result',
           content: event.content,
@@ -137,21 +139,21 @@ export function useChatStream() {
         const fileId = event.content.file_id;
         const fileMsg: Message = {
           id: Date.now(),
-          idx: sessionStore.messages[sessionStore.messages.length - 1].idx,
+          idx: getNextIdx(streamSessionId),
           role: 'tool',
           type: 'tool_result',
           content: `文件已导出: ${fileId}`,
           created_at: new Date().toISOString(),
           attachments_file_id: [fileId],
         };
-        // 异步获取文件信息并更新
-        filesApi.getFileInfo(sessionStore.currentSessionId, fileId).then(({ data }) => {
+
+        filesApi.getFileInfo(streamSessionId, fileId).then(({ data }) => {
           fileMsg.attachments = [data];
         });
-  sessionStore.addMessage(fileMsg);
+  sessionStore.addMessageToSession(streamSessionId, fileMsg);
   break;
       case 'error':
-        sessionStore.updateLastMessage((msg) => {
+        sessionStore.updateLastMessageInSession(streamSessionId, (msg) => {
           msg.content += `\n错误: ${event.content}`;
           msg.isStreaming = false;
         });

@@ -29,9 +29,9 @@ const props = defineProps<{
 
 const containerRef = ref<HTMLElement | null>(null);
 
-const emit = defineEmits<{
-  (e: 'regenerate', message: Message): void;
-}>();
+// const emit = defineEmits<{
+//   (e: 'regenerate', message: Message): void;
+// }>();
 
 watch(
   () => props.messages.length,
