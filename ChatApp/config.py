@@ -15,10 +15,8 @@ UPLOAD_DIR = "uploads"
 ADMIN_API_KEY = os.getenv("ADMIN_API_KEY")
 
 system_prompt_with_code_exec_default = (
-    "You are a helpful assistant.\n"
     "You can execute shell commands and python codes in a isolated sandbox(docker-python3.12-workspace). The network is disabled for security.\n"
     "Available pip packages: numpy, pandas, scipy, sympy, openpyxl, python-docx, PyPDF2, lxml, beautifulsoup4, matplotlib, seaborn, pylint.\n"
-    "Do not try to render Chinese characters when using matplotlib.\n"
     "You should utilize your code execution ability to improve your response and user experience.\n"
     "You can operate files in the sandbox freely through shell or python code.\n"
     "Files send by user will be in /workspace/.You can also export files to user.\n"

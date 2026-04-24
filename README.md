@@ -80,7 +80,9 @@ WORKDIR /workspace
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1
 
-RUN apt-get update && apt-get install -y --no-install-recommends \
+RUN apt-get update && \
+    apt-get install -y fonts-wqy-microhei && \
+    apt-get install -y --no-install-recommends \
     build-essential \
     gfortran \
     libopenblas-dev \
