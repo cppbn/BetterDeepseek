@@ -146,10 +146,9 @@ async def chat_stream(
 
     async def event_generator():
         while True:
-            # 每次新一轮 LLM 调用前检查客户端是否断开
             if await fastapi_request.is_disconnected():
                 logger.info(f"Client disconnected for session {session_id}")
-                break
+                return
 
             reasoning_content = ""
             content = ""
@@ -172,6 +171,9 @@ async def chat_stream(
                         return
                     current_tool_calls = []
                     async for event in llm_provider.parse_stream(response):
+                        if await fastapi_request.is_disconnected():
+                            logger.info(f"Client disconnected for session {session_id}")
+                            return
                         if event["type"] == "done":
                             break
                         elif event["type"] == "content":
@@ -185,9 +187,6 @@ async def chat_stream(
 
             # 处理工具调用
             if current_tool_calls:
-                # 检查是否断开，避免后续无意义操作
-                if await fastapi_request.is_disconnected():
-                    return
                 
                 assistant_msg = {
                     "role": "assistant",

@@ -49,7 +49,7 @@
           </div>
         </div>
 
-        <!-- 已选文件预览区（图片缩略图） -->
+        <!-- 已选文件预览区 -->
         <div v-if="selectedFiles.length > 0" class="mb-2 flex flex-wrap gap-2">
           <div
             v-for="file in selectedFiles"
@@ -136,7 +136,6 @@ import {
 import FileUploadButton from './FileUploadButton.vue';
 import { filesApi } from '@/api/files';
 
-// 本地文件记录（包含预览URL和上传后的file_id）
 interface SelectedFile {
   tempId: string;              // 临时唯一标识
   file_id?: string;            // 后端返回的文件ID
@@ -212,7 +211,6 @@ async function uploadFiles(files: File[]) {
   }
 }
 
-// 处理按钮选择的文件
 function handleFilesSelected(files: File[]) {
   uploadFiles(files);
 }
@@ -226,7 +224,6 @@ function removeFile(tempId: string) {
   selectedFiles.value = selectedFiles.value.filter(f => f.tempId !== tempId);
 }
 
-// 发送消息
 function sendMessage() {
   if (!canSend.value) return;
   const message = inputText.value.trim();

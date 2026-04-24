@@ -53,11 +53,20 @@ export function useChatStream() {
         handleStreamEvent(event);
       }
     } catch (error) {
-      console.error('Stream error:', error);
-      sessionStore.updateLastMessage((msg) => {
-        msg.content += '\n\n发生错误，请重试。';
-        msg.isStreaming = false;
-      });
+      if (error?.name === 'AbortError') {
+        // 用户主动取消，追加提示（可选）
+        sessionStore.updateLastMessage((msg) => {
+          if (!msg.content.endsWith('（已停止）')) {
+            msg.content += '（已停止）';
+          }
+        });
+      } else {
+        console.error('Stream error:', error);
+        sessionStore.updateLastMessage((msg) => {
+          msg.content = '发生错误，请重试。';
+          msg.isStreaming = false;
+        });
+      }
     } finally {
       isStreaming.value = false;
       // 标记流式结束
