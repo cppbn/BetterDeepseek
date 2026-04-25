@@ -29,10 +29,16 @@ async def init_db():
             CREATE TABLE IF NOT EXISTS sessions (
                 id TEXT PRIMARY KEY,
                 user_id INTEGER NOT NULL,
+                title TEXT,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 FOREIGN KEY (user_id) REFERENCES users (id) ON DELETE CASCADE
             )
         """)
+        # 迁移：为已有数据库添加 title 列
+        try:
+            await db.execute("ALTER TABLE sessions ADD COLUMN title TEXT")
+        except Exception:
+            pass
         await db.execute("""
             CREATE TABLE IF NOT EXISTS messages (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -105,11 +111,23 @@ async def create_session_db(db: aiosqlite.Connection, user_id: int) -> str:
 
 async def get_sessions_db(db: aiosqlite.Connection, user_id: int) -> List[SessionInfo]:
     cursor = await db.execute(
-        "SELECT id, created_at FROM sessions WHERE user_id = ? ORDER BY created_at DESC",
+        "SELECT id, title, created_at FROM sessions WHERE user_id = ? ORDER BY created_at DESC",
         (user_id,)
     )
     rows = await cursor.fetchall()
-    return [SessionInfo(session_id=row[0], created_at=datetime.fromisoformat(row[1])) for row in rows]
+    return [SessionInfo(session_id=row[0], title=row[1], created_at=datetime.fromisoformat(row[2])) for row in rows]
+
+
+async def update_session_title_db(db: aiosqlite.Connection, session_id: str, title: str):
+    await db.execute("UPDATE sessions SET title = ? WHERE id = ?", (title, session_id))
+    await db.commit()
+    logger.info(f"Session {session_id} title updated: {title}")
+
+
+async def get_session_title_db(db: aiosqlite.Connection, session_id: str) -> str | None:
+    cursor = await db.execute("SELECT title FROM sessions WHERE id = ?", (session_id,))
+    row = await cursor.fetchone()
+    return row[0] if row else None
 
 
 async def session_belongs_to_user(db: aiosqlite.Connection, session_id: str, user_id: int) -> bool:

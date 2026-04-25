@@ -10,7 +10,8 @@ from typing import Dict, Any, Optional
 from ChatApp.pydantic_models import ChatRequest, MessageResponse
 from ChatApp.database import (
     get_db, session_belongs_to_user, get_messages_db, save_message_db,
-    get_message_attachments_db, save_file
+    get_message_attachments_db, save_file, update_session_title_db,
+    get_session_title_db
 )
 from ChatApp.dependencies import get_current_user
 import ChatApp.config as config
@@ -30,6 +31,44 @@ PROVIDER_MAP = {
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/sessions/{session_id}/chat", tags=["chat"])
+
+
+TITLE_MODEL = "deepseek-chat"
+TITLE_MAX_LENGTH = 40
+
+async def generate_session_title(session_id: str, user_msg: str, assistant_reply: str) -> str | None:
+    """生成会话标题并保存到数据库，返回标题文本或 None"""
+    try:
+        provider = DeepSeekProvider(api_key=config.DEEPSEEK_API_KEY)
+        prompt = (
+            f"Generate a concise title (6 words or fewer) for this conversation. "
+            f"Reply with only the title, no quotes, no punctuation.\n\n"
+            f"User: {user_msg[:500]}\nAssistant: {assistant_reply[:500]}"
+        )
+        payload = provider.build_payload(
+            model=TITLE_MODEL,
+            messages=provider.convert_messages_to_provider_format([
+                {"role": "user", "content": prompt}
+            ]),
+            stream=False,
+            thinking=False,
+        )
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            resp = await client.post(provider.get_api_url(), headers=provider.get_headers(), json=payload)
+            if resp.status_code == 200:
+                data = resp.json()
+                title = data["choices"][0]["message"]["content"].strip()[:TITLE_MAX_LENGTH]
+                title = title.strip('"\'').strip()
+                if title:
+                    async with aiosqlite.connect(config.DATABASE_URL) as db:
+                        await update_session_title_db(db, session_id, title)
+                    logger.info(f"Session {session_id} auto-titled: {title}")
+                    return title
+            else:
+                logger.warning(f"Title generation failed: {resp.status_code}")
+    except Exception as e:
+        logger.warning(f"Title generation error for session {session_id}: {e}")
+    return None
 
 
 @router.post("/stream")
@@ -257,6 +296,17 @@ async def chat_stream(
                 if content:
                     await save_message_db(db, session_id, last_msg_idx + 1, "assistant", "message", content)
                 logger.info(f"Chat stream finished for session {session_id}")
+
+                # 标题自动生成（仅首次对话且无标题时）
+                if not await get_session_title_db(db, session_id):
+                    first_user_msg = next((m["content"] for m in messages_for_llm if m["role"] == "user"), None)
+                    if first_user_msg and content:
+                        try:
+                            title = await generate_session_title(session_id, first_user_msg, content)
+                            if title:
+                                yield f"data: {json.dumps({'type': 'title', 'content': title})}\n\n"
+                        except Exception:
+                            pass
                 return
 
     return StreamingResponse(

@@ -159,6 +159,9 @@ export function useChatStream() {
           msg.isStreaming = false;
         });
         break;
+      case 'title':
+        sessionStore.updateSessionTitle(streamSessionId, event.content);
+        break;
     }
   }
 

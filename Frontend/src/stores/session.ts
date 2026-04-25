@@ -96,6 +96,13 @@ export const useSessionStore = defineStore('session', () => {
     }
   }
 
+  function updateSessionTitle(sessionId: string, title: string) {
+    const session = sessions.value.find((s) => s.session_id === sessionId);
+    if (session) {
+      session.title = title;
+    }
+  }
+
   return {
     sessions,
     currentSessionId,
@@ -109,5 +116,6 @@ export const useSessionStore = defineStore('session', () => {
     setCurrentSession,
     addMessageToSession,
     updateLastMessageInSession,
+    updateSessionTitle,
   };
 });

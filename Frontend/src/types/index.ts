@@ -7,6 +7,7 @@ export interface User {
 
 export interface Session {
   session_id: string;
+  title?: string;
   created_at: string;
 }
 
@@ -39,7 +40,7 @@ export interface ChatRequest {
 }
 
 export interface StreamEvent {
-  type: 'content' | 'reasoning_content' | 'tool_call' | 'tool_result' | 'file' | 'error';
+  type: 'content' | 'reasoning_content' | 'tool_call' | 'tool_result' | 'file' | 'error' | 'title';
   content: any;
 }
 

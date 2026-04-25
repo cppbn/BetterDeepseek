@@ -30,21 +30,18 @@
         ]"
       >
         <div v-if="!collapsed" class="flex items-center justify-between">
-          <span class="text-sm font-medium">{{ formatDate(session.created_at) }}</span>
+          <span class="text-sm font-medium truncate flex-1 mr-2">
+            {{ session.title || formatDate(session.created_at) }}
+          </span>
           <button
             @click.stop="deleteSessionConfirm(session.session_id)"
-            class="opacity-0 group-hover:opacity-100 p-1 rounded-md hover:bg-gray-200 transition"
+            class="opacity-0 group-hover:opacity-100 p-1 rounded-md hover:bg-gray-200 transition shrink-0"
           >
             <TrashIcon class="w-4 h-4 text-gray-500 hover:text-red-500" />
           </button>
         </div>
-        <!-- 折叠时显示一个聊天图标 -->
-        <div v-else class="flex flex-col items-center">
-          <ChatBubbleLeftIcon class="w-5 h-5" />
-          <div class="w-1 h-1 bg-gray-300 rounded-full mt-1"></div>
-        </div>
         <p v-if="!collapsed" class="text-xs text-gray-400 truncate mt-1">
-          {{ session.session_id.slice(0, 8) }}
+          {{ session.title ? formatDate(session.created_at) : session.session_id.slice(0, 8) }}
         </p>
       </div>
     </div>

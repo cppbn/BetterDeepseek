@@ -24,6 +24,7 @@ class SessionCreateResponse(BaseModel):
 
 class SessionInfo(BaseModel):
     session_id: str
+    title: Optional[str] = None
     created_at: datetime
 
 
