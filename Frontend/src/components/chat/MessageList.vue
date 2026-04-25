@@ -1,5 +1,5 @@
 <template>
-  <div ref="containerRef" class="flex-1 overflow-y-auto p-4 space-y-4 bg-white">
+  <div ref="containerRef" class="flex-1 overflow-y-auto p-2 md:p-4 space-y-3 md:space-y-4 bg-white">
     <div v-if="isLoading" class="flex justify-center py-8">
       <LoadingSpinner class="w-8 h-8 text-blue-600" />
     </div>
