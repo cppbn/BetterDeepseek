@@ -22,7 +22,6 @@ from ChatApp.providers.models import supported_models
 
 from ChatApp.providers.deepseek import DeepSeekProvider
 from ChatApp.providers.openrouter import OpenRouterProvider
-from ChatApp.providers.bigmodel import bigmodel_provider
 
 PROVIDER_MAP = {
     "deepseek": lambda: DeepSeekProvider(api_key=config.DEEPSEEK_API_KEY),
@@ -132,7 +131,10 @@ async def chat_stream(
                 else:
                     if att["mime_type"].startswith("text"):
                         async with aiofiles.open(att["file_path"], encoding="utf-8") as f:
-                            final_message += f"\n[{att['original_filename']}]\n{await f.read()}"
+                            text_content = await f.read(100000)
+                            final_message += f"\n[{att['original_filename']}]\n{text_content}"
+                            if len(text_content) >= 100000:
+                                final_message += "\n[file truncated at 100KB]"
                 valid_attachments.append(att)
 
     message_id = await save_message_db(db, session_id, last_msg_idx + 1, "user", "message", final_message)
@@ -162,7 +164,7 @@ async def chat_stream(
                 thinking=model_info["thinking"],
             )
 
-            async with httpx.AsyncClient(timeout=30) as client:
+            async with httpx.AsyncClient(timeout=httpx.Timeout(30.0, read=180.0)) as client:
                 async with client.stream("POST", llm_provider.get_api_url(), headers=headers, json=payload) as response:
                     if response.status_code != 200:
                         error_text = await response.aread()

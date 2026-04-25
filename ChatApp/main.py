@@ -16,6 +16,8 @@ async def lifespan(app: FastAPI):
     await init_db()
     logger.info("Application startup complete")
     yield
+    from ChatApp.tools.web_search import close_browser as _close_playwright
+    await _close_playwright()
     logger.info("Application shutdown")
 
 

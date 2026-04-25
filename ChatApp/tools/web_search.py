@@ -6,7 +6,6 @@ from bs4 import BeautifulSoup
 from readability import Document
 
 from playwright.async_api import async_playwright, Browser, Page
-import atexit
 
 DEFAULT_TIMEOUT = 10.0
 
@@ -93,27 +92,37 @@ async def search_tavily(
 
 # ---------- Playwright 浏览器单例管理 ----------
 _browser: Optional[Browser] = None
+_playwright_instance = None
+
 
 async def _get_browser() -> Browser:
     """获取全局复用的浏览器实例（懒加载）"""
-    global _browser
+    global _browser, _playwright_instance
     if _browser is None or not _browser.is_connected():
-        playwright = await async_playwright().start()
-        _browser = await playwright.chromium.launch(
+        if _playwright_instance is None:
+            _playwright_instance = await async_playwright().start()
+        _browser = await _playwright_instance.chromium.launch(
             headless=True,
             args=['--disable-blink-features=AutomationControlled', '--no-sandbox', '--disable-dev-shm-usage']
         )
     return _browser
 
 
-async def _close_browser():
-    """清理浏览器资源（脚本退出时调用）"""
-    global _browser
+async def close_browser():
+    """清理浏览器资源（应在应用 shutdown 时调用）"""
+    global _browser, _playwright_instance
     if _browser:
-        await _browser.close()
+        try:
+            await _browser.close()
+        except Exception:
+            pass
         _browser = None
-
-atexit.register(lambda: __import__('asyncio').run(_close_browser()))
+    if _playwright_instance:
+        try:
+            await _playwright_instance.stop()
+        except Exception:
+            pass
+        _playwright_instance = None
 
 async def fetch_url(url: str, max_length: int = 2000) -> str:
     """

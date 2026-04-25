@@ -19,6 +19,24 @@ class ContainerManager:
         self.docker_client = docker.from_env()
         self.containers: Dict[str, dict] = {}  # container_id -> {last_activity, created_at}
         self.lock = threading.Lock()
+        self._cleanup_orphaned_containers()
+
+    APP_LABEL = "better-deepseek-sandbox"
+
+    def _cleanup_orphaned_containers(self):
+        """On startup, remove any orphaned containers from previous runs."""
+        try:
+            for container in self.docker_client.containers.list(
+                all=True,
+                filters={"label": f"app={self.APP_LABEL}"}
+            ):
+                try:
+                    container.remove(force=True)
+                    logger.info(f"Cleaned up orphaned container {container.id}")
+                except Exception as e:
+                    logger.warning(f"Failed to clean up orphaned container {container.id}: {e}")
+        except Exception as e:
+            logger.warning(f"Failed to query orphaned containers: {e}")
 
     def cleanup_idle_containers(self):
         """
@@ -116,6 +134,7 @@ class ContainerManager:
                 cpu_quota=cpu_quota,
                 network_disabled=network_disabled,
                 detach=True,
+                labels={"app": self.APP_LABEL},
             )
             container.start()
             cid = container.id

@@ -16,6 +16,7 @@ logger = logging.getLogger(__name__)
 async def init_db():
     """初始化数据库表"""
     async with aiosqlite.connect(DATABASE_URL) as db:
+        await db.execute("PRAGMA foreign_keys = ON")
         await db.execute("""
             CREATE TABLE IF NOT EXISTS users (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,

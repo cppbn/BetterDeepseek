@@ -78,5 +78,3 @@ class BigModelProvider(LLMProvider):
 
     def convert_messages_to_provider_format(self, messages):
         return messages
-    
-bigmodel_provider = BigModelProvider('')
