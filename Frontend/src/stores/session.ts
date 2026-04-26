@@ -103,6 +103,13 @@ export const useSessionStore = defineStore('session', () => {
     }
   }
 
+  function removeMessagesFromIndex(sessionId: string, fromIdx: number) {
+    const msgs = messagesMap.value[sessionId];
+    if (msgs) {
+      messagesMap.value[sessionId] = msgs.filter((m) => m.idx < fromIdx);
+    }
+  }
+
   return {
     sessions,
     currentSessionId,
@@ -113,9 +120,11 @@ export const useSessionStore = defineStore('session', () => {
     createSession,
     deleteSession,
     fetchMessages,
+    deleteMessage,
     setCurrentSession,
     addMessageToSession,
     updateLastMessageInSession,
     updateSessionTitle,
+    removeMessagesFromIndex,
   };
 });

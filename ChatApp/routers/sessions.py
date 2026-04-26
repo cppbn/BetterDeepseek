@@ -157,8 +157,17 @@ async def delete_message(
     if not await session_belongs_to_user(db, session_id, current_user["id"]):
         logger.warning(f"Unauthorized attempt to delete session {session_id} by user {current_user['id']}")
         raise HTTPException(status_code=404, detail="Session not exists or Unauthenticated")
-    
-    files_cursor = await db.execute("SELECT file_path FROM files WHERE session_id = ? AND message_id >= ?",(session_id, message_id,))
+
+    cursor = await db.execute("SELECT idx FROM messages WHERE id = ? AND session_id = ?", (message_id, session_id))
+    row = await cursor.fetchone()
+    if not row:
+        raise HTTPException(status_code=404, detail="Message not found")
+    target_idx = row[0]
+
+    files_cursor = await db.execute(
+        "SELECT file_path FROM files WHERE session_id = ? AND message_id IN (SELECT id FROM messages WHERE session_id = ? AND idx >= ?)",
+        (session_id, session_id, target_idx)
+    )
     rows = await files_cursor.fetchall()
     file_paths = [row[0] for row in rows]
 
@@ -170,7 +179,7 @@ async def delete_message(
         except Exception as e:
             logger.warning(f"Failed to delete file {path}: {e}")
     
-    delete_cursor = await db.execute("DELETE FROM messages WHERE session_id = ? AND id >= ?", (session_id, message_id,))
+    delete_cursor = await db.execute("DELETE FROM messages WHERE session_id = ? AND idx >= ?", (session_id, target_idx))
     await db.commit()
 
     return {"status": "deleted", "count": delete_cursor.rowcount}

@@ -35,7 +35,7 @@
           </span>
           <button
             @click.stop="deleteSessionConfirm(session.session_id)"
-            class="opacity-0 group-hover:opacity-100 p-1 rounded-md hover:bg-gray-200 transition shrink-0"
+            class="p-1 rounded-md hover:bg-gray-200 transition shrink-0 opacity-30 hover:opacity-100"
           >
             <TrashIcon class="w-4 h-4 text-gray-500 hover:text-red-500" />
           </button>

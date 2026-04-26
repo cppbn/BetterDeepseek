@@ -1,5 +1,40 @@
 <template>
-  <div class="flex" :class="[message.role === 'user' ? 'justify-end' : 'justify-start']">
+  <div
+    class="flex group"
+    :class="[message.role === 'user' ? 'justify-end' : 'justify-start']"
+    @mouseenter="showActions = true"
+    @mouseleave="showActions = false"
+    @click="togglePinActions"
+  >
+    <!-- Action buttons for user messages (left side of bubble) -->
+    <div
+      v-if="message.role === 'user' && message.type === 'message' && !message.isStreaming && (showActions || pinnedActions)"
+      class="flex items-center gap-0.5 mr-1 self-end mb-1"
+    >
+      <button
+        @click="copyContent"
+        class="p-1 rounded text-gray-400 hover:text-gray-600 hover:bg-gray-100 transition-colors"
+        :title="copied ? '已复制' : '复制'"
+      >
+        <CheckIcon v-if="copied" class="w-4 h-4 text-green-500" />
+        <ClipboardIcon v-else class="w-4 h-4" />
+      </button>
+      <button
+        @click="$emit('edit', message)"
+        class="p-1 rounded text-gray-400 hover:text-gray-600 hover:bg-gray-100 transition-colors"
+        title="编辑"
+      >
+        <PencilIcon class="w-4 h-4" />
+      </button>
+      <button
+        @click="confirmDelete"
+        class="p-1 rounded text-gray-400 hover:text-red-600 hover:bg-red-50 transition-colors"
+        title="删除"
+      >
+        <TrashIcon class="w-4 h-4" />
+      </button>
+    </div>
+
     <div
       class="max-w-[85%] rounded-2xl px-5 py-3 shadow-sm"
       :class="{
@@ -89,6 +124,29 @@
         </div>
       </div>
     </div>
+
+    <!-- Action buttons for assistant messages (right side of bubble) -->
+    <div
+      v-if="message.role === 'assistant' && message.type === 'message' && !message.isStreaming && (showActions || pinnedActions)"
+      class="flex items-center gap-0.5 ml-1 self-end mb-1"
+    >
+      <button
+        @click="copyContent"
+        class="p-1 rounded text-gray-400 hover:text-gray-600 hover:bg-gray-100 transition-colors"
+        :title="copied ? '已复制' : '复制'"
+      >
+        <CheckIcon v-if="copied" class="w-4 h-4 text-green-500" />
+        <ClipboardIcon v-else class="w-4 h-4" />
+      </button>
+      <button
+        v-if="isLastAssistantMessage"
+        @click="$emit('regenerate', message)"
+        class="p-1 rounded text-gray-400 hover:text-blue-600 hover:bg-blue-50 transition-colors"
+        title="重新生成"
+      >
+        <ArrowPathIcon class="w-4 h-4" />
+      </button>
+    </div>
   </div>
   <!-- 文件预览模态框 -->
   <div
@@ -131,7 +189,7 @@
   </div>
 </template>
 <script setup lang="ts">
-import { ref, reactive, onMounted, onUnmounted, watch } from 'vue';
+import { ref, reactive, computed, onMounted, onUnmounted } from 'vue';
 import {
   WrenchScrewdriverIcon,
   CheckCircleIcon,
@@ -140,6 +198,11 @@ import {
   ChevronRightIcon,
   ChevronDownIcon,
   XMarkIcon,
+  ClipboardIcon,
+  CheckIcon,
+  PencilIcon,
+  TrashIcon,
+  ArrowPathIcon,
 } from '@heroicons/vue/24/outline';
 import type { Message, FileInfo } from '@/types';
 import MarkdownRenderer from './MarkdownRenderer.vue';
@@ -147,7 +210,35 @@ import { filesApi } from '@/api/files';
 import { useSessionStore } from '@/stores/session';
 
 const props = defineProps<{ message: Message }>();
+
+const emit = defineEmits<{
+  (e: 'edit', message: Message): void;
+  (e: 'delete', message: Message): void;
+  (e: 'regenerate', message: Message): void;
+}>();
+
 const sessionStore = useSessionStore();
+
+const showActions = ref(false);
+const pinnedActions = ref(false);
+const copied = ref(false);
+
+function togglePinActions() {
+  pinnedActions.value = !pinnedActions.value;
+}
+
+const isLastAssistantMessage = computed(() => {
+  const msgs = sessionStore.currentMessages;
+  if (!msgs.length) return false;
+  const lastMsg = msgs[msgs.length - 1];
+  if (!lastMsg) return false;
+  return (
+    lastMsg.id === props.message.id &&
+    lastMsg.role === 'assistant' &&
+    lastMsg.type === 'message' &&
+    !lastMsg.isStreaming
+  );
+});
 
 // 折叠状态（独立于消息对象）
 const collapsed = ref(true);
@@ -173,6 +264,32 @@ function toggleCollapse() {
   // 仅对可折叠类型生效
   if (['reasoning', 'tool_call', 'tool_result'].includes(props.message.type)) {
     collapsed.value = !collapsed.value;
+  }
+}
+
+async function copyContent() {
+  try {
+    await navigator.clipboard.writeText(props.message.content);
+  } catch {
+    const textarea = document.createElement('textarea');
+    textarea.value = props.message.content;
+    textarea.style.position = 'fixed';
+    textarea.style.opacity = '0';
+    document.body.appendChild(textarea);
+    textarea.select();
+    document.execCommand('copy');
+    document.body.removeChild(textarea);
+  }
+  copied.value = true;
+  setTimeout(() => {
+    copied.value = false;
+  }, 2000);
+}
+
+function confirmDelete() {
+  const confirmed = window.confirm('确定要删除这条消息吗？后续消息也会被删除。');
+  if (confirmed) {
+    emit('delete', props.message);
   }
 }
 

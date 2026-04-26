@@ -6,7 +6,12 @@
     <template v-else>
       <div class="max-w-3xl mx-auto space-y-4">
         <div v-for="message in messages" :key="message.id">
-          <MessageItem :message="message" />
+          <MessageItem
+            :message="message"
+            @edit="(m) => $emit('edit', m)"
+            @delete="(m) => $emit('delete', m)"
+            @regenerate="(m) => $emit('regenerate', m)"
+          />
         </div>
         <div v-if="messages.length === 0" class="text-center text-gray-400 py-8">
           开始新对话吧
@@ -27,11 +32,13 @@ const props = defineProps<{
   isLoading?: boolean;
 }>();
 
-const containerRef = ref<HTMLElement | null>(null);
+defineEmits<{
+  (e: 'edit', message: Message): void;
+  (e: 'delete', message: Message): void;
+  (e: 'regenerate', message: Message): void;
+}>();
 
-// const emit = defineEmits<{
-//   (e: 'regenerate', message: Message): void;
-// }>();
+const containerRef = ref<HTMLElement | null>(null);
 
 watch(
   () => props.messages.length,

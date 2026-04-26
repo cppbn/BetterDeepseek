@@ -61,7 +61,7 @@ md.renderer.rules.fence = (tokens, idx, options, env, self) => {
 const renderedHtml = computed(() => {
   if (!props.content) return '';
 
-  let safeContent = props.content.replace(
+  const safeContent = props.content.replace(
     /(```[\s\S]*?```|~~~[\s\S]*?~~~|`[^`\n]+`)|([^\n]\n?)(\\\[)|(\\\])(\n?[^\n])/g,
     (match, code, preOpen, openBracket, closeBracket, postClose) => {
       if (code) return code;

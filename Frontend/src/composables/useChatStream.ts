@@ -78,6 +78,7 @@ export function useChatStream() {
         msg.isStreaming = false;
       });
       isStreaming.value = false;
+      await sessionStore.fetchMessages(streamSessionId);
     }
   }
 
@@ -171,5 +172,14 @@ export function useChatStream() {
     }
   }
 
-  return { sendMessage, isStreaming, stop };
+  async function regenerate(sessionId: string, request: ChatRequest) {
+    const msgs = sessionStore.messagesMap[sessionId] || [];
+    if (msgs.length === 0) return;
+    const lastUserMsg = [...msgs].reverse().find((m) => m.role === 'user');
+    if (!lastUserMsg) return;
+    await sessionStore.deleteMessage(sessionId, lastUserMsg.id);
+    await sendMessage(sessionId, { ...request, message: lastUserMsg.content });
+  }
+
+  return { sendMessage, isStreaming, stop, regenerate };
 }

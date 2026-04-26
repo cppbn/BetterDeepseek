@@ -111,6 +111,13 @@
           >
             <PaperAirplaneIcon class="w-5 h-5" />
           </button>
+          <button
+            v-if="isEditing && !isStreaming"
+            @click="$emit('cancelEdit')"
+            class="ml-1 px-3 py-2 rounded-xl bg-gray-100 text-gray-600 hover:bg-gray-200 transition-colors text-sm"
+          >
+            取消编辑
+          </button>
         </div>
       </div>
 
@@ -148,11 +155,13 @@ const props = defineProps<{
   sessionId: string | null;
   disabled?: boolean;
   isStreaming?: boolean;
+  isEditing?: boolean;
 }>();
 
 const emit = defineEmits<{
   (e: 'send', message: string, attachments?: string[], enableSearch?: boolean, enableCodeExec?: boolean): void;
-  (e: 'stop'): void; 
+  (e: 'stop'): void;
+  (e: 'cancelEdit'): void;
 }>();
 
 const inputText = ref('');
@@ -247,6 +256,17 @@ function sendMessage() {
 
 function toggleSearch() { enableSearch.value = !enableSearch.value; }
 function toggleCodeExec() { enableCodeExec.value = !enableCodeExec.value; }
+
+function setInputText(text: string) {
+  inputText.value = text;
+  nextTick(() => {
+    if (textareaRef.value) {
+      textareaRef.value.focus();
+    }
+  });
+}
+
+defineExpose({ setInputText });
 
 function handleKeydown(e: KeyboardEvent) {
   if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {

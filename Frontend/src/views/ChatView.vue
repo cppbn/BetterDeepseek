@@ -14,13 +14,19 @@
         :messages="sessionStore.currentMessages"
         :is-loading="sessionStore.isLoadingMessages"
         class="flex-1"
+        @edit="handleEdit"
+        @delete="handleDelete"
+        @regenerate="handleRegenerate"
       />
       <ChatInput
+        ref="chatInputRef"
         :session-id="sessionStore.currentSessionId"
         :is-streaming="isStreaming"
+        :is-editing="editingMessageId != null"
         :disabled="!sessionStore.currentSessionId"
         @send="handleSendMessage"
         @stop="stop"
+        @cancel-edit="handleCancelEdit"
       />
     </div>
   </AppLayout>
@@ -36,12 +42,15 @@ import ModelSelector from '@/components/chat/ModelSelector.vue';
 import { useSessionStore } from '@/stores/session';
 import { useChatStream } from '@/composables/useChatStream';
 import { modelsApi } from '@/api/models';
-import type { ModelsResponse } from '@/types';
+import type { ModelsResponse, Message } from '@/types';
 
 const route = useRoute();
 const router = useRouter();
 const sessionStore = useSessionStore();
-const { sendMessage, isStreaming, stop } = useChatStream();
+const { sendMessage, isStreaming, stop, regenerate } = useChatStream();
+
+const chatInputRef = ref<InstanceType<typeof ChatInput> | null>(null);
+const editingMessageId = ref<number | null>(null);
 
 const models = ref<ModelsResponse | null>(null);
 const currentModel = ref<string>('default');
@@ -87,6 +96,31 @@ watch(
   }
 );
 
+async function handleDelete(message: Message) {
+  if (!sessionStore.currentSessionId) return;
+  await sessionStore.deleteMessage(sessionStore.currentSessionId, message.id);
+}
+
+async function handleEdit(message: Message) {
+  editingMessageId.value = message.id;
+  chatInputRef.value?.setInputText(message.content);
+}
+
+function handleCancelEdit() {
+  editingMessageId.value = null;
+  chatInputRef.value?.setInputText('');
+}
+
+async function handleRegenerate(message: Message) {
+  if (!sessionStore.currentSessionId) return;
+  await regenerate(sessionStore.currentSessionId, {
+    message: message.content,
+    enable_search: true,
+    enable_code_exec: true,
+    model: currentModel.value,
+  });
+}
+
 async function handleSendMessage(
   message: string,
   attachments?: string[],
@@ -94,6 +128,10 @@ async function handleSendMessage(
   enableCodeExec?: boolean
 ) {
   if (!sessionStore.currentSessionId) return;
+  if (editingMessageId.value != null) {
+    await sessionStore.deleteMessage(sessionStore.currentSessionId, editingMessageId.value);
+    editingMessageId.value = null;
+  }
   await sendMessage(sessionStore.currentSessionId, {
     message,
     attachments_file_id: attachments,
