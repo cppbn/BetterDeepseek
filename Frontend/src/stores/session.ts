@@ -22,7 +22,9 @@ export const useSessionStore = defineStore('session', () => {
 
   function addMessageToSession(sessionId: string, message: Message) {
     ensureSessionMessages(sessionId);
-    messagesMap.value[sessionId].push(message);
+    const msgs = messagesMap.value[sessionId]!;
+    message.seq = (msgs.at(-1)?.seq ?? -1) + 1;
+    msgs.push(message);
   }
 
   function updateLastMessageInSession(
@@ -103,6 +105,31 @@ export const useSessionStore = defineStore('session', () => {
     }
   }
 
+  async function syncAfterStream(sessionId: string) {
+    try {
+      const { data } = await apiClient.get<Message[]>(
+        `/sessions/${sessionId}/messages`
+      );
+      const localMsgs = messagesMap.value[sessionId];
+      if (!localMsgs || localMsgs.length === 0) {
+        messagesMap.value[sessionId] = data;
+        return;
+      }
+      const serverBySeq = new Map<number, Message>();
+      for (const m of data) {
+        serverBySeq.set(m.seq, m);
+      }
+      for (const local of localMsgs) {
+        const server = serverBySeq.get(local.seq);
+        if (server && local.id < 0) {
+          local.id = server.id;
+        }
+      }
+    } catch {
+      // silent — messages are already displayed from streaming
+    }
+  }
+
   function removeMessagesFromIndex(sessionId: string, fromIdx: number) {
     const msgs = messagesMap.value[sessionId];
     if (msgs) {
@@ -125,6 +152,7 @@ export const useSessionStore = defineStore('session', () => {
     addMessageToSession,
     updateLastMessageInSession,
     updateSessionTitle,
+    syncAfterStream,
     removeMessagesFromIndex,
   };
 });

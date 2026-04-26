@@ -42,6 +42,7 @@ async def init_db():
             CREATE TABLE IF NOT EXISTS messages (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 session_id TEXT NOT NULL,
+                seq INTEGER NOT NULL,
                 idx INTEGER NOT NULL,
                 role TEXT NOT NULL,
                 type TEXT NOT NULL,
@@ -50,6 +51,10 @@ async def init_db():
                 FOREIGN KEY (session_id) REFERENCES sessions (id) ON DELETE CASCADE
             )
         """)
+        try:
+            await db.execute("ALTER TABLE messages ADD COLUMN seq INTEGER NOT NULL DEFAULT 0")
+        except Exception:
+            pass
         await db.execute("""
             CREATE TABLE IF NOT EXISTS files (
                 id TEXT PRIMARY KEY,
@@ -298,25 +303,26 @@ async def get_messages_db(db: aiosqlite.Connection, session_id: str, user_id: in
     if not await session_belongs_to_user(db, session_id, user_id):
         raise Exception("Session not exists or Unauthenticated")
     cursor = await db.execute(
-        "SELECT id, idx, role, type, content, created_at FROM messages WHERE session_id = ? ORDER BY created_at",
+        "SELECT id, seq, idx, role, type, content, created_at FROM messages WHERE session_id = ? ORDER BY created_at",
         (session_id,)
     )
     rows = await cursor.fetchall()
     return [
         MessageResponse(
             id=row[0],
-            idx=row[1],
-            role=row[2],
-            type=row[3],
-            content=row[4],
-            created_at=datetime.fromisoformat(row[5]),
+            seq=row[1],
+            idx=row[2],
+            role=row[3],
+            type=row[4],
+            content=row[5],
+            created_at=datetime.fromisoformat(row[6]),
         )
         for row in rows
     ]
 
 async def get_message_db(db: aiosqlite.Connection, message_id: int) -> MessageResponse:
     cursor = await db.execute(
-        "SELECT id, idx, role, type, content, created_at FROM messages WHERE id = ?",
+        "SELECT id, seq, idx, role, type, content, created_at FROM messages WHERE id = ?",
         (message_id,)
     )
     row = await cursor.fetchone()
@@ -324,18 +330,19 @@ async def get_message_db(db: aiosqlite.Connection, message_id: int) -> MessageRe
         raise Exception("Message not exists")
     return MessageResponse(
         id=row[0],
-        idx=row[1],
-        role=row[2],
-        type=row[3],
-        content=row[4],
-        created_at=datetime.fromisoformat(row[5]),
+        seq=row[1],
+        idx=row[2],
+        role=row[3],
+        type=row[4],
+        content=row[5],
+        created_at=datetime.fromisoformat(row[6]),
     )
 
-async def save_message_db(db: aiosqlite.Connection, session_id: str, idx: int, role: str, type_: str,
+async def save_message_db(db: aiosqlite.Connection, session_id: str, seq: int, idx: int, role: str, type_: str,
                           content: str) -> int:
     cursor = await db.execute(
-        "INSERT INTO messages (session_id, idx, role, type, content) VALUES (?, ?, ?, ?, ?)",
-        (session_id, idx, role, type_, content)
+        "INSERT INTO messages (session_id, seq, idx, role, type, content) VALUES (?, ?, ?, ?, ?, ?)",
+        (session_id, seq, idx, role, type_, content)
     )
     await db.commit()
     return cursor.lastrowid

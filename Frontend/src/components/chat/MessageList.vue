@@ -5,7 +5,7 @@
     </div>
     <template v-else>
       <div class="max-w-3xl mx-auto space-y-4">
-        <div v-for="message in messages" :key="message.id">
+        <div v-for="message in messages" :key="message.seq">
           <MessageItem
             :message="message"
             @edit="(m) => $emit('edit', m)"

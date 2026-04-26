@@ -30,6 +30,7 @@ class SessionInfo(BaseModel):
 
 class MessageResponse(BaseModel):
     id: int
+    seq: int
     idx: int
     role: str
     type: str  # message / reasoning / tool_call / tool_result

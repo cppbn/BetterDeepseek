@@ -9,20 +9,20 @@ export function useChatStream() {
   const abortController = ref<AbortController | null>(null);
   let _tempIdCounter = -1;
 
-  function getNextIdx(sessionId: string): number {
-    const msgs = sessionStore.messagesMap[sessionId] || [];
-    return msgs.length > 0 ? msgs[msgs.length - 1].idx + 1 : 0;
-  }
-
   async function sendMessage(sessionId: string, request: ChatRequest) {
     if (isStreaming.value) return;
 
-    // 固定当前流的会话 ID
     const streamSessionId = sessionId;
+
+    const msgs = sessionStore.messagesMap[streamSessionId] || [];
+    const lastMsgIdx = msgs.at(-1)?.idx ?? -1;
+    const userMsgIdx = lastMsgIdx + 1;
+    const turnIdx = userMsgIdx + 1;
 
     const userMsg: Message = {
       id: _tempIdCounter--,
-      idx: getNextIdx(streamSessionId),
+      seq: 0,
+      idx: userMsgIdx,
       role: 'user',
       type: 'message',
       content: request.message,
@@ -33,7 +33,8 @@ export function useChatStream() {
 
     const assistantMsg: Message = {
       id: _tempIdCounter--,
-      idx: userMsg.idx + 1,
+      seq: 0,
+      idx: turnIdx,
       role: 'assistant',
       type: 'reasoning',
       content: '',
@@ -57,7 +58,7 @@ export function useChatStream() {
       });
 
       for await (const event of generator) {
-        handleStreamEvent(streamSessionId, event);
+        handleStreamEvent(streamSessionId, turnIdx, event);
       }
     } catch (error: any) {
       if (error?.name === 'AbortError') {
@@ -78,11 +79,11 @@ export function useChatStream() {
         msg.isStreaming = false;
       });
       isStreaming.value = false;
-      await sessionStore.fetchMessages(streamSessionId);
+      await sessionStore.syncAfterStream(streamSessionId);
     }
   }
 
-  function handleStreamEvent(streamSessionId: string, event: StreamEvent) {
+  function handleStreamEvent(streamSessionId: string, turnIdx: number, event: StreamEvent) {
     switch (event.type) {
       case 'content':
         sessionStore.updateLastMessageInSession(streamSessionId, (msg) => {
@@ -90,10 +91,11 @@ export function useChatStream() {
             msg.content += event.content;
           } else {
             sessionStore.addMessageToSession(streamSessionId, {
-      id: _tempIdCounter--,
-      idx: msg.idx,
-      role: 'assistant',
-      type: 'message',
+              id: _tempIdCounter--,
+              seq: 0,
+              idx: msg.idx,
+              role: 'assistant',
+              type: 'message',
               content: event.content,
               created_at: new Date().toISOString(),
             });
@@ -106,10 +108,11 @@ export function useChatStream() {
             msg.content += event.content;
           } else {
             sessionStore.addMessageToSession(streamSessionId, {
-      id: _tempIdCounter--,
-      idx: msg.idx,
-      role: 'assistant',
-      type: 'reasoning',
+              id: _tempIdCounter--,
+              seq: 0,
+              idx: msg.idx,
+              role: 'assistant',
+              type: 'reasoning',
               content: event.content,
               created_at: new Date().toISOString(),
             });
@@ -118,10 +121,11 @@ export function useChatStream() {
         break;
       case 'tool_call':
         sessionStore.addMessageToSession(streamSessionId, {
-      id: _tempIdCounter--,
-      idx: getNextIdx(streamSessionId),
-      role: 'assistant',
-      type: 'tool_call',
+          id: _tempIdCounter--,
+          seq: 0,
+          idx: turnIdx,
+          role: 'assistant',
+          type: 'tool_call',
           content: `调用工具: ${event.content.name}`,
           created_at: new Date().toISOString(),
           toolCallData: event.content,
@@ -130,7 +134,8 @@ export function useChatStream() {
       case 'tool_result':
         sessionStore.addMessageToSession(streamSessionId, {
           id: _tempIdCounter--,
-          idx: getNextIdx(streamSessionId),
+          seq: 0,
+          idx: turnIdx,
           role: 'tool',
           type: 'tool_result',
           content: event.content,
@@ -140,20 +145,20 @@ export function useChatStream() {
       case 'file':
         const fileId = event.content.file_id;
         const fileMsg: Message = {
-      id: _tempIdCounter--,
-      idx: getNextIdx(streamSessionId),
-      role: 'tool',
-      type: 'tool_result',
-      content: `文件已导出: ${fileId}`,
+          id: _tempIdCounter--,
+          seq: 0,
+          idx: turnIdx,
+          role: 'tool',
+          type: 'tool_result',
+          content: `文件已导出: ${fileId}`,
           created_at: new Date().toISOString(),
           attachments_file_id: [fileId],
         };
-
         filesApi.getFileInfo(streamSessionId, fileId).then(({ data }) => {
           fileMsg.attachments = [data];
         });
-  sessionStore.addMessageToSession(streamSessionId, fileMsg);
-  break;
+        sessionStore.addMessageToSession(streamSessionId, fileMsg);
+        break;
       case 'error':
         sessionStore.updateLastMessageInSession(streamSessionId, (msg) => {
           msg.content += `\n错误: ${event.content}`;

@@ -153,6 +153,7 @@ async def chat_stream(
     messages_for_llm.insert(0, {"role": "system", "content": llm_system_message})
 
     last_msg_idx = history[-1].idx if history else -1
+    next_seq = history[-1].seq + 1 if history else 0
 
     # 处理附件
     uploaded_attachments = await get_message_attachments_db(db, session_id, None)
@@ -177,7 +178,8 @@ async def chat_stream(
                                 final_message += "\n[file truncated at 100KB]"
                 valid_attachments.append(att)
 
-    message_id = await save_message_db(db, session_id, last_msg_idx + 1, "user", "message", final_message)
+    message_id = await save_message_db(db, session_id, next_seq, last_msg_idx + 1, "user", "message", final_message)
+    next_seq += 1
     last_msg_idx += 1
 
     for att in valid_attachments:
@@ -187,6 +189,7 @@ async def chat_stream(
     messages_for_llm.append({"role": "user", "content": final_message})
 
     async def event_generator():
+        nonlocal next_seq
         total_usage = {"prompt_tokens": 0, "completion_tokens": 0}
         while True:
             if await fastapi_request.is_disconnected():
@@ -243,9 +246,11 @@ async def chat_stream(
                 }
                 messages_for_llm.append(assistant_msg)
                 if reasoning_content:
-                    await save_message_db(db, session_id, last_msg_idx + 1, "assistant", "reasoning", reasoning_content)
+                    await save_message_db(db, session_id, next_seq, last_msg_idx + 1, "assistant", "reasoning", reasoning_content)
+                    next_seq += 1
                 if content:
-                    await save_message_db(db, session_id, last_msg_idx + 1, "assistant", "message", content)
+                    await save_message_db(db, session_id, next_seq, last_msg_idx + 1, "assistant", "message", content)
+                    next_seq += 1
 
                 for tc in current_tool_calls:
                     func_name = tc["function"]["name"]
@@ -255,7 +260,8 @@ async def chat_stream(
                     try:
                         func_args = json.loads(func_args_str)
                         yield f"data: {json.dumps({'type': 'tool_call', 'content': {'name': func_name, 'args': func_args}})}\n\n"
-                        tc_msg_id = await save_message_db(db, session_id, last_msg_idx + 1, "assistant", "tool_call", json.dumps({'name': func_name, 'args': func_args}))
+                        tc_msg_id = await save_message_db(db, session_id, next_seq, last_msg_idx + 1, "assistant", "tool_call", json.dumps({'name': func_name, 'args': func_args}))
+                        next_seq += 1
                         logger.info(f"Tool call: {func_name} with args {func_args}")
 
                         # 注入 sandbox 参数
@@ -284,7 +290,8 @@ async def chat_stream(
                         result = f"Error: Tool execution failed - {str(e)}"
 
                     yield f"data: {json.dumps({'type': 'tool_result', 'content': str(result)})}\n\n"
-                    await save_message_db(db, session_id, last_msg_idx + 1, "tool", "tool_result", result)
+                    await save_message_db(db, session_id, next_seq, last_msg_idx + 1, "tool", "tool_result", result)
+                    next_seq += 1
 
                     messages_for_llm.append({
                         "role": "tool",
@@ -298,9 +305,11 @@ async def chat_stream(
             else:
                 # 无工具调用，结束
                 if reasoning_content:
-                    await save_message_db(db, session_id, last_msg_idx + 1, "assistant", "reasoning", reasoning_content)
+                    await save_message_db(db, session_id, next_seq, last_msg_idx + 1, "assistant", "reasoning", reasoning_content)
+                    next_seq += 1
                 if content:
-                    await save_message_db(db, session_id, last_msg_idx + 1, "assistant", "message", content)
+                    await save_message_db(db, session_id, next_seq, last_msg_idx + 1, "assistant", "message", content)
+                    next_seq += 1
                 logger.info(f"Chat stream finished for session {session_id}")
 
                 if total_usage.get("prompt_tokens") or total_usage.get("completion_tokens"):

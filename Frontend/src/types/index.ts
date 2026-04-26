@@ -13,6 +13,7 @@ export interface Session {
 
 export interface Message {
   id: number;
+  seq: number;
   idx: number;
   role: 'user' | 'assistant' | 'tool';
   type: 'message' | 'reasoning' | 'tool_call' | 'tool_result';
