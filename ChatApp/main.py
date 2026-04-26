@@ -14,6 +14,8 @@ logger = logging.getLogger(__name__)
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     await init_db()
+    from ChatApp.providers.models import init_models
+    await init_models()
     logger.info("Application startup complete")
     yield
     from ChatApp.tools.web_search import close_browser as _close_playwright

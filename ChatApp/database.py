@@ -34,7 +34,6 @@ async def init_db():
                 FOREIGN KEY (user_id) REFERENCES users (id) ON DELETE CASCADE
             )
         """)
-        # 迁移：为已有数据库添加 title 列
         try:
             await db.execute("ALTER TABLE sessions ADD COLUMN title TEXT")
         except Exception:
@@ -67,7 +66,65 @@ async def init_db():
             )
         """)
         await db.commit()
+        await _init_model_configs(db)
+        await _init_token_usage(db)
         logger.info("Database initialized")
+
+
+async def _init_model_configs(db: aiosqlite.Connection):
+    """Create model_configs table and seed defaults if empty."""
+    await db.execute("""
+        CREATE TABLE IF NOT EXISTS model_configs (
+            key TEXT PRIMARY KEY,
+            provider TEXT NOT NULL,
+            model TEXT NOT NULL,
+            thinking INTEGER DEFAULT 0,
+            accept_image INTEGER DEFAULT 0,
+            accept_audio INTEGER DEFAULT 0,
+            is_default INTEGER DEFAULT 0,
+            category TEXT NOT NULL DEFAULT 'chat'
+        )
+    """)
+    cursor = await db.execute("SELECT COUNT(*) FROM model_configs")
+    count = (await cursor.fetchone())[0]
+    if count == 0:
+        defaults = [
+            ("default", "deepseek", "deepseek-reasoner", 1, 0, 0, 1, "chat"),
+            ("deepseek-v4-flash-thinking", "deepseek", "deepseek-v4-flash", 1, 0, 0, 0, "chat"),
+            ("deepseek-v4-pro-thinking", "deepseek", "deepseek-v4-pro", 1, 0, 0, 0, "chat"),
+            ("qwen3.6-plus-thinking", "openrouter", "qwen/qwen3.6-plus", 1, 1, 0, 0, "chat"),
+            ("qwen3.5-flash-thinking", "openrouter", "qwen/qwen3.5-flash-02-23", 1, 1, 0, 0, "chat"),
+            ("kimi-k2.6-thinking", "openrouter", "moonshotai/kimi-k2.6", 1, 1, 0, 0, "chat"),
+            ("glm-5.1-thinking", "openrouter", "z-ai/glm-5.1", 1, 0, 0, 0, "chat"),
+            ("mino-v2.5-thinking", "openrouter", "xiaomi/mimo-v2.5", 1, 1, 1, 0, "chat"),
+            ("image_transcription", "openrouter", "qwen/qwen3.5-flash-02-23", 0, 0, 0, 0, "image"),
+            ("audio_transcription", "openrouter", "xiaomi/mimo-v2.5", 0, 0, 0, 0, "audio"),
+            ("title_generation", "deepseek", "deepseek-chat", 0, 0, 0, 0, "title"),
+        ]
+        await db.executemany(
+            "INSERT INTO model_configs (key, provider, model, thinking, accept_image, accept_audio, is_default, category) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            defaults
+        )
+        await db.commit()
+        logger.info("Seeded default model configurations")
+
+
+async def _init_token_usage(db: aiosqlite.Connection):
+    """Create token_usage table."""
+    await db.execute("""
+        CREATE TABLE IF NOT EXISTS token_usage (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            session_id TEXT NOT NULL,
+            user_id INTEGER NOT NULL,
+            model TEXT NOT NULL,
+            prompt_tokens INTEGER DEFAULT 0,
+            completion_tokens INTEGER DEFAULT 0,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (session_id) REFERENCES sessions (id) ON DELETE CASCADE,
+            FOREIGN KEY (user_id) REFERENCES users (id) ON DELETE CASCADE
+        )
+    """)
+    await db.commit()
 
 
 async def get_db():
@@ -78,6 +135,105 @@ async def get_db():
         yield conn
     finally:
         await conn.close()
+
+
+# ---------- 模型配置相关 ----------
+async def get_all_model_configs_db(db: aiosqlite.Connection) -> list[dict]:
+    cursor = await db.execute("SELECT key, provider, model, thinking, accept_image, accept_audio, is_default, category FROM model_configs")
+    rows = await cursor.fetchall()
+    return [{"key": r[0], "provider": r[1], "model": r[2], "thinking": bool(r[3]),
+             "accept_image": bool(r[4]), "accept_audio": bool(r[5]), "is_default": bool(r[6]), "category": r[7]} for r in rows]
+
+
+async def get_model_config_db(db: aiosqlite.Connection, key: str) -> dict | None:
+    cursor = await db.execute("SELECT key, provider, model, thinking, accept_image, accept_audio, is_default, category FROM model_configs WHERE key = ?", (key,))
+    row = await cursor.fetchone()
+    if not row:
+        return None
+    return {"key": row[0], "provider": row[1], "model": row[2], "thinking": bool(row[3]),
+            "accept_image": bool(row[4]), "accept_audio": bool(row[5]), "is_default": bool(row[6]), "category": row[7]}
+
+
+async def upsert_model_config_db(db: aiosqlite.Connection, key: str, provider: str, model: str,
+                                  thinking: int, accept_image: int, accept_audio: int,
+                                  is_default: int, category: str):
+    if is_default:
+        await db.execute("UPDATE model_configs SET is_default = 0 WHERE category = ?", (category,))
+    await db.execute(
+        "INSERT OR REPLACE INTO model_configs (key, provider, model, thinking, accept_image, accept_audio, is_default, category) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+        (key, provider, model, thinking, accept_image, accept_audio, is_default, category)
+    )
+    await db.commit()
+
+
+async def delete_model_config_db(db: aiosqlite.Connection, key: str) -> bool:
+    cursor = await db.execute("DELETE FROM model_configs WHERE key = ?", (key,))
+    await db.commit()
+    return cursor.rowcount > 0
+
+
+async def get_model_config_by_category_db(db: aiosqlite.Connection, category: str) -> dict | None:
+    """Get the model config for a specific category (image, audio, title). Returns the first matching."""
+    cursor = await db.execute(
+        "SELECT key, provider, model, thinking, accept_image, accept_audio, is_default, category FROM model_configs WHERE category = ? LIMIT 1",
+        (category,)
+    )
+    row = await cursor.fetchone()
+    if not row:
+        return None
+    return {"key": row[0], "provider": row[1], "model": row[2], "thinking": bool(row[3]),
+            "accept_image": bool(row[4]), "accept_audio": bool(row[5]), "is_default": bool(row[6]), "category": row[7]}
+
+
+# ---------- 管理员: 用户管理 ----------
+async def get_all_users_db(db: aiosqlite.Connection) -> list[dict]:
+    cursor = await db.execute("SELECT id, username, created_at FROM users ORDER BY id")
+    rows = await cursor.fetchall()
+    return [{"id": r[0], "username": r[1], "created_at": r[2]} for r in rows]
+
+
+async def delete_user_db(db: aiosqlite.Connection, user_id: int) -> bool:
+    cursor = await db.execute("DELETE FROM users WHERE id = ?", (user_id,))
+    await db.commit()
+    return cursor.rowcount > 0
+
+
+# ---------- Token 用量 ----------
+async def save_token_usage_db(db: aiosqlite.Connection, session_id: str, user_id: int,
+                               model: str, prompt_tokens: int, completion_tokens: int):
+    await db.execute(
+        "INSERT INTO token_usage (session_id, user_id, model, prompt_tokens, completion_tokens) VALUES (?, ?, ?, ?, ?)",
+        (session_id, user_id, model, prompt_tokens, completion_tokens)
+    )
+    await db.commit()
+
+
+async def get_token_usage_stats_db(db: aiosqlite.Connection) -> dict:
+    cursor = await db.execute("""
+        SELECT COALESCE(SUM(prompt_tokens), 0), COALESCE(SUM(completion_tokens), 0), COUNT(*)
+        FROM token_usage
+    """)
+    row = await cursor.fetchone()
+    return {"total_prompt_tokens": row[0], "total_completion_tokens": row[1], "total_requests": row[2]}
+
+
+async def get_token_usage_by_model_db(db: aiosqlite.Connection) -> list[dict]:
+    cursor = await db.execute("""
+        SELECT model, SUM(prompt_tokens), SUM(completion_tokens), COUNT(*)
+        FROM token_usage GROUP BY model ORDER BY SUM(prompt_tokens + completion_tokens) DESC
+    """)
+    rows = await cursor.fetchall()
+    return [{"model": r[0], "prompt_tokens": r[1], "completion_tokens": r[2], "requests": r[3]} for r in rows]
+
+
+async def get_token_usage_by_user_db(db: aiosqlite.Connection) -> list[dict]:
+    cursor = await db.execute("""
+        SELECT u.username, SUM(tu.prompt_tokens), SUM(tu.completion_tokens), COUNT(*)
+        FROM token_usage tu JOIN users u ON tu.user_id = u.id
+        GROUP BY tu.user_id ORDER BY SUM(tu.prompt_tokens + tu.completion_tokens) DESC
+    """)
+    rows = await cursor.fetchall()
+    return [{"username": r[0], "prompt_tokens": r[1], "completion_tokens": r[2], "requests": r[3]} for r in rows]
 
 
 # ---------- 用户相关数据库操作 ----------

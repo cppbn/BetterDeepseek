@@ -35,11 +35,14 @@ class OpenRouterProvider(LLMProvider):
 
     async def parse_stream(self, response: httpx.Response):
         tool_calls_map: Dict[int, Dict[str, Any]] = {}
+        usage = None
         async for line in response.aiter_lines():
             if not line.startswith("data: "):
                 continue
             data_str = line[6:].strip()
             if data_str == "[DONE]":
+                if usage:
+                    yield {"type": "usage", "data": usage}
                 if tool_calls_map:
                     complete_tool_calls = [
                         tool_calls_map[i] for i in sorted(tool_calls_map.keys())
@@ -51,7 +54,8 @@ class OpenRouterProvider(LLMProvider):
             try:
                 data = json.loads(data_str)
                 delta = data["choices"][0].get("delta", {})
-                # finish_reason = data["choices"][0].get("finish_reason")
+                if "usage" in data and data["usage"]:
+                    usage = data["usage"]
 
                 if delta.get("content"):
                     yield {"type": "content", "data": delta["content"]}

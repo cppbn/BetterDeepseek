@@ -1,8 +1,13 @@
 import httpx
 import base64
+import logging
 import ChatApp.config as config
+from ChatApp.providers.model_manager import get_image_model, get_audio_model
+
+logger = logging.getLogger(__name__)
 
 async def inquire_image(question: str, image: bytes, image_format: str):
+    model = await get_image_model()
     image_b64 = base64.b64encode(image).decode('utf-8')
     image_data_url = f"data:image/{image_format};base64,{image_b64}"
     messages = [{
@@ -25,7 +30,7 @@ async def inquire_image(question: str, image: bytes, image_format: str):
         "Content-Type": "application/json"
     }
     payload = {
-        "model": "qwen/qwen3.5-flash-02-23",
+        "model": model,
         "messages": messages
     }
     async with httpx.AsyncClient(timeout=30.0) as client:
@@ -41,6 +46,7 @@ async def inquire_image(question: str, image: bytes, image_format: str):
     return result
 
 async def inquire_audio(question: str, audio: bytes, audio_format: str):
+    model = await get_audio_model()
     audio_b64 = base64.b64encode(audio).decode("utf-8")
     messages = [{
         "role": "user",
@@ -63,7 +69,7 @@ async def inquire_audio(question: str, audio: bytes, audio_format: str):
         "Content-Type": "application/json"
     }
     payload = {
-        "model": "xiaomi/mimo-v2.5",
+        "model": model,
         "messages": messages
     }
     async with httpx.AsyncClient(timeout=30.0) as client:

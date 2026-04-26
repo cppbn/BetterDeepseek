@@ -11,7 +11,7 @@ from ChatApp.pydantic_models import ChatRequest, MessageResponse
 from ChatApp.database import (
     get_db, session_belongs_to_user, get_messages_db, save_message_db,
     get_message_attachments_db, save_file, update_session_title_db,
-    get_session_title_db
+    get_session_title_db, save_token_usage_db
 )
 from ChatApp.dependencies import get_current_user
 import ChatApp.config as config
@@ -23,6 +23,7 @@ from ChatApp.providers.models import supported_models
 
 from ChatApp.providers.deepseek import DeepSeekProvider
 from ChatApp.providers.openrouter import OpenRouterProvider
+from ChatApp.providers.model_manager import get_title_model
 
 PROVIDER_MAP = {
     "deepseek": lambda: DeepSeekProvider(api_key=config.DEEPSEEK_API_KEY),
@@ -33,20 +34,20 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/sessions/{session_id}/chat", tags=["chat"])
 
 
-TITLE_MODEL = "deepseek-chat"
 TITLE_MAX_LENGTH = 40
 
 async def generate_session_title(session_id: str, user_msg: str, assistant_reply: str) -> str | None:
     """生成会话标题并保存到数据库，返回标题文本或 None"""
     try:
         provider = DeepSeekProvider(api_key=config.DEEPSEEK_API_KEY)
+        title_model = await get_title_model()
         prompt = (
             f"Generate a concise title (6 words or fewer) for this conversation. "
             f"Reply with only the title, no quotes, no punctuation.\n\n"
             f"User: {user_msg[:500]}\nAssistant: {assistant_reply[:500]}"
         )
         payload = provider.build_payload(
-            model=TITLE_MODEL,
+            model=title_model,
             messages=provider.convert_messages_to_provider_format([
                 {"role": "user", "content": prompt}
             ]),
@@ -186,6 +187,7 @@ async def chat_stream(
     messages_for_llm.append({"role": "user", "content": final_message})
 
     async def event_generator():
+        total_usage = {"prompt_tokens": 0, "completion_tokens": 0}
         while True:
             if await fastapi_request.is_disconnected():
                 logger.info(f"Client disconnected for session {session_id}")
@@ -225,6 +227,10 @@ async def chat_stream(
                             yield f"data: {json.dumps({'type': 'reasoning_content', 'content': event['data']})}\n\n"
                         elif event["type"] == "tool_calls_complete":
                             current_tool_calls: list = event["data"]
+                        elif event["type"] == "usage":
+                            usage_data = event["data"]
+                            total_usage["prompt_tokens"] += usage_data.get("prompt_tokens", 0)
+                            total_usage["completion_tokens"] += usage_data.get("completion_tokens", 0)
 
             # 处理工具调用
             if current_tool_calls:
@@ -296,6 +302,15 @@ async def chat_stream(
                 if content:
                     await save_message_db(db, session_id, last_msg_idx + 1, "assistant", "message", content)
                 logger.info(f"Chat stream finished for session {session_id}")
+
+                if total_usage.get("prompt_tokens") or total_usage.get("completion_tokens"):
+                    try:
+                        await save_token_usage_db(
+                            db, session_id, current_user["id"], model_info["model"],
+                            total_usage["prompt_tokens"], total_usage["completion_tokens"]
+                        )
+                    except Exception:
+                        pass
 
                 # 标题自动生成（仅首次对话且无标题时）
                 if not await get_session_title_db(db, session_id):
