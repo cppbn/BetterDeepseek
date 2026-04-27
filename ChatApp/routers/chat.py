@@ -11,7 +11,7 @@ from ChatApp.pydantic_models import ChatRequest, MessageResponse
 from ChatApp.database import (
     get_db, session_belongs_to_user, get_messages_db, save_message_db,
     get_message_attachments_db, save_file, update_session_title_db,
-    get_session_title_db, save_token_usage_db
+    get_session_title_db, save_token_usage_db, build_llm_messages
 )
 from ChatApp.dependencies import get_current_user
 import ChatApp.config as config
@@ -87,12 +87,9 @@ async def chat_stream(
     model_info = supported_models.get(request.model or "default") or supported_models["default"]
     llm_provider = PROVIDER_MAP[model_info["provider"]]()
 
-    # 获取历史消息
+    # 获取历史消息，重建完整多轮上下文（含 reasoning、tool_calls、tool_result）
     history = await get_messages_db(db, session_id, current_user["id"])
-    messages_for_llm: list[dict[str, Any]] = [
-        {"role": msg.role, "content": msg.content}
-        for msg in history if msg.type == "message"
-    ]
+    messages_for_llm: list[dict[str, Any]] = build_llm_messages(history)
     
     # 配置 LLM
     enable_search = request.enable_search
@@ -260,7 +257,7 @@ async def chat_stream(
                     try:
                         func_args = json.loads(func_args_str)
                         yield f"data: {json.dumps({'type': 'tool_call', 'content': {'name': func_name, 'args': func_args}})}\n\n"
-                        tc_msg_id = await save_message_db(db, session_id, next_seq, last_msg_idx + 1, "assistant", "tool_call", json.dumps({'name': func_name, 'args': func_args}))
+                        tc_msg_id = await save_message_db(db, session_id, next_seq, last_msg_idx + 1, "assistant", "tool_call", json.dumps({'name': func_name, 'args': func_args, 'id': tool_call_id}))
                         next_seq += 1
                         logger.info(f"Tool call: {func_name} with args {func_args}")
 
@@ -290,7 +287,7 @@ async def chat_stream(
                         result = f"Error: Tool execution failed - {str(e)}"
 
                     yield f"data: {json.dumps({'type': 'tool_result', 'content': str(result)})}\n\n"
-                    await save_message_db(db, session_id, next_seq, last_msg_idx + 1, "tool", "tool_result", result)
+                    await save_message_db(db, session_id, next_seq, last_msg_idx + 1, "tool", "tool_result", json.dumps({'tool_call_id': tool_call_id, 'content': str(result)}))
                     next_seq += 1
 
                     messages_for_llm.append({

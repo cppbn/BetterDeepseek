@@ -320,6 +320,83 @@ async def get_messages_db(db: aiosqlite.Connection, session_id: str, user_id: in
         for row in rows
     ]
 
+
+def build_llm_messages(history: List[MessageResponse]) -> list[dict[str, Any]]:
+    """从历史消息重建 LLM 多轮对话上下文，包含 reasoning、tool_calls、tool_result。
+
+    当前代码在跨轮次时只加载 type=="message" 的消息，丢失了工具调用和推理内容，
+    导致下一轮 LLM 不记得上一轮读过/操作过的文件内容。
+    此函数从 raw messages 重建完整的 messages_for_llm 列表。
+    """
+    import json as _json
+
+    messages: list[dict[str, Any]] = []
+    pending: dict[str, Any] | None = None
+    pending_tool_calls: list[dict[str, Any]] = []
+
+    def _flush():
+        nonlocal pending, pending_tool_calls
+        if pending is None and not pending_tool_calls:
+            return
+        if pending is None:
+            pending = {"role": "assistant"}
+        if pending_tool_calls:
+            pending["tool_calls"] = pending_tool_calls
+        messages.append(pending)
+        pending = None
+        pending_tool_calls = []
+
+    for msg in history:
+        if msg.type == "message":
+            if msg.role == "user":
+                _flush()
+                messages.append({"role": "user", "content": msg.content})
+            elif msg.role == "assistant":
+                if pending is None:
+                    pending = {"role": "assistant"}
+                pending["content"] = msg.content
+        elif msg.type == "reasoning":
+            if pending is None:
+                pending = {"role": "assistant"}
+            pending["reasoning_content"] = msg.content
+        elif msg.type == "tool_call":
+            if pending is None:
+                pending = {"role": "assistant"}
+            tc_info = _json.loads(msg.content)
+            tc_id = tc_info.get("id", f"tc_{msg.id}")
+            tc_name = tc_info.get("name", "")
+            tc_args = tc_info.get("args", {})
+            if isinstance(tc_args, dict):
+                tc_args = _json.dumps(tc_args)
+            pending_tool_calls.append({
+                "id": tc_id,
+                "type": "function",
+                "function": {
+                    "name": tc_name,
+                    "arguments": tc_args,
+                }
+            })
+        elif msg.type == "tool_result":
+            try:
+                result_data = _json.loads(msg.content)
+                if isinstance(result_data, dict) and "tool_call_id" in result_data:
+                    tc_id = result_data["tool_call_id"]
+                    result_content = result_data.get("content", "")
+                else:
+                    raise _json.JSONDecodeError("Not new format", msg.content, 0)
+            except (_json.JSONDecodeError, TypeError):
+                tc_id = pending_tool_calls[-1]["id"] if pending_tool_calls else f"tc_{msg.id}"
+                result_content = msg.content
+            _flush()
+            messages.append({
+                "role": "tool",
+                "tool_call_id": tc_id,
+                "content": result_content,
+            })
+    _flush()
+    return messages
+
+
 async def get_message_db(db: aiosqlite.Connection, message_id: int) -> MessageResponse:
     cursor = await db.execute(
         "SELECT id, seq, idx, role, type, content, created_at FROM messages WHERE id = ?",
