@@ -124,7 +124,49 @@ async def _fetch_url_tool(url: str, max_length: int = 2000) -> str:
         logger.error(f"URL fetch failed: {str(e)}")
         return f"Error fetching URL: {str(e)}"
 
+import base64
+import mimetypes
 from ChatApp.tools.utils import _compress_image_if_needed
+
+@llm_tool(
+    name="read_image",
+    description="Read and view an image file from the sandbox. Use this to visually inspect images, charts, plots, screenshots, and photos.",
+    parameters=[
+        {"name": "file_path", "description": "Path to the image file in the sandbox, e.g. /workspace/plot.png"}
+    ]
+)
+async def _read_image_tool(file_path: str, container_id: str):
+    file_path = sandbox.normalize_path(file_path)
+    image_bytes = await sandbox.download_file_from_sandbox(container_id, file_path)
+
+    mime_type, _ = mimetypes.guess_type(file_path)
+    if mime_type and mime_type.startswith("image/"):
+        original_format = mime_type.split("/")[-1]
+    else:
+        if image_bytes.startswith(b'\x89PNG'):
+            original_format = "png"
+        elif image_bytes.startswith(b'\xff\xd8\xff'):
+            original_format = "jpeg"
+        elif image_bytes.startswith(b'GIF'):
+            original_format = "gif"
+        elif image_bytes.startswith(b'RIFF') and b'WEBP' in image_bytes[8:12]:
+            original_format = "webp"
+        else:
+            return {"type": "error", "content": f"Could not determine image format for {file_path}"}
+        mime_type = f"image/{original_format}"
+
+    compressed_bytes, final_format = await _compress_image_if_needed(image_bytes, original_format)
+    b64 = base64.b64encode(compressed_bytes).decode("utf-8")
+    final_mime = f"image/{final_format}"
+
+    logger.info(f"read_image: {file_path} ({len(image_bytes)} bytes -> {len(compressed_bytes)} bytes)")
+    return {
+        "type": "image",
+        "data": b64,
+        "mime_type": final_mime,
+        "file_path": file_path
+    }
+
 
 @llm_tool(
     name="describe_image",
@@ -140,8 +182,8 @@ async def _describe_image_tool(container_id: str, file_path: str, question: str 
     """
     try:
         from ChatApp.tools.sandbox import download_file_from_sandbox
-        import mimetypes
 
+        file_path = sandbox.normalize_path(file_path)
         image_bytes = await download_file_from_sandbox(container_id, file_path)
 
         mime_type, _ = mimetypes.guess_type(file_path)
@@ -171,6 +213,36 @@ async def _describe_image_tool(container_id: str, file_path: str, question: str 
 
 
 @llm_tool(
+    name="read_audio",
+    description="Read and listen to an audio file from the sandbox. Use this to hear audio recordings, speech, music, or sound effects.",
+    parameters=[
+        {"name": "file_path", "description": "Path to the audio file in the sandbox, e.g. /workspace/recording.wav"}
+    ]
+)
+async def _read_audio_tool(file_path: str, container_id: str):
+    file_path = sandbox.normalize_path(file_path)
+    audio_bytes = await sandbox.download_file_from_sandbox(container_id, file_path)
+
+    af_mime, _ = mimetypes.guess_type(file_path)
+    if not af_mime or not af_mime.startswith("audio/"):
+        ext = file_path.split(".")[-1].lower()
+        format_map = {"wav": "wav", "mp3": "mpeg", "m4a": "mp4", "flac": "flac", "ogg": "ogg"}
+        audio_format = format_map.get(ext, "wav")
+    else:
+        audio_format = af_mime.split("/")[-1]
+
+    b64 = base64.b64encode(audio_bytes).decode("utf-8")
+
+    logger.info(f"read_audio: {file_path} ({len(audio_bytes)} bytes)")
+    return {
+        "type": "audio",
+        "data": b64,
+        "mime_type": f"audio/{audio_format}",
+        "file_path": file_path
+    }
+
+
+@llm_tool(
     name="describe_audio",
     description="Transcribe or describe the content of an audio file located inside the sandbox. Provide a question about the audio (e.g., 'What is being said in this recording?').",
     parameters=[
@@ -185,8 +257,8 @@ async def _describe_audio_tool(container_id: str, file_path: str, question: str 
     """
     try:
         from ChatApp.tools.sandbox import download_file_from_sandbox
-        import mimetypes
 
+        file_path = sandbox.normalize_path(file_path)
         audio_bytes = await download_file_from_sandbox(container_id, file_path)
 
         # 推断音频格式

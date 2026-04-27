@@ -3,6 +3,7 @@ from fastapi.responses import StreamingResponse, Response
 import aiosqlite
 import httpx
 import json
+import base64
 import logging
 import aiofiles
 from typing import Dict, Any, Optional
@@ -16,7 +17,8 @@ from ChatApp.database import (
 from ChatApp.dependencies import get_current_user
 import ChatApp.config as config
 from ChatApp.tools.registry import global_tools_registry, global_tools_for_llm, get_tool_definition
-from ChatApp.tools.sandbox import check_availability, run_sandbox, is_running, download_file_with_meta, upload_file_to_sandbox
+from ChatApp.tools.sandbox import check_availability, run_sandbox, is_running, download_file_with_meta, upload_file_to_sandbox, normalize_path
+from ChatApp.tools.utils import _compress_image_if_needed
 from ChatApp.routers.sessions import running_sandboxes, aiolock
 
 from ChatApp.providers.models import supported_models
@@ -35,6 +37,87 @@ router = APIRouter(prefix="/api/sessions/{session_id}/chat", tags=["chat"])
 
 
 TITLE_MAX_LENGTH = 40
+
+
+async def _enrich_history_multimodal(
+    messages_for_llm: list[dict[str, Any]],
+    history: list,
+    db: aiosqlite.Connection,
+    session_id: str,
+    model_info: dict,
+) -> list[dict[str, Any]]:
+    """将历史用户消息中附带的图片/音频编码为多模态 content 数组。
+    
+    build_llm_messages 只从 DB 读取纯文本 content，未包含附件。
+    sandbox 不可用时，需要把附件数据注入到 LLM 上下文中。
+    """
+    accept_img = model_info.get("accept_image")
+    accept_aud = model_info.get("accept_audio")
+
+    # 为所有历史用户消息预加载附件，做成 {msg_id: [attachments]} 映射
+    attachment_map: dict[int, list[dict]] = {}
+    for msg in history:
+        if msg.type == "message" and msg.role == "user":
+            atts = await get_message_attachments_db(db, session_id, msg.id)
+            if atts:
+                attachment_map[msg.id] = atts
+
+    if not attachment_map:
+        return messages_for_llm
+
+    # 遍历 LLM 消息列表，找到对应的历史用户消息并富化
+    result: list[dict[str, Any]] = []
+    hist_user_idx = 0  # 历史中 user message 的序号
+    for llm_msg in messages_for_llm:
+        if llm_msg.get("role") == "user":
+            # 找到对应的历史记录（跳过非 user message 类型）
+            while hist_user_idx < len(history):
+                hmsg = history[hist_user_idx]
+                hist_user_idx += 1
+                if hmsg.type == "message" and hmsg.role == "user":
+                    break
+            else:
+                result.append(llm_msg)
+                continue
+
+            atts = attachment_map.get(hmsg.id)
+            if not atts:
+                result.append(llm_msg)
+                continue
+
+            # 构建多模态内容
+            content_parts = [{"type": "text", "text": llm_msg["content"]}]
+            has_multimodal = False
+            for att in atts:
+                mime = att["mime_type"]
+                if accept_img and mime.startswith("image/"):
+                    async with aiofiles.open(att["file_path"], mode="rb") as f:
+                        img_bytes = await f.read()
+                    fmt = mime.split("/")[-1]
+                    compressed, final_fmt = await _compress_image_if_needed(img_bytes, fmt)
+                    final_mime = f"image/{final_fmt}"
+                    b64 = base64.b64encode(compressed).decode("utf-8")
+                    content_parts.append({"type": "image_url", "image_url": {"url": f"data:{final_mime};base64,{b64}"}})
+                    has_multimodal = True
+                elif accept_aud and mime.startswith("audio/"):
+                    async with aiofiles.open(att["file_path"], mode="rb") as f:
+                        aud_bytes = await f.read()
+                    aud_b64 = base64.b64encode(aud_bytes).decode("utf-8")
+                    audio_format = mime.split("/")[-1]
+                    fmt_map = {"mpeg": "mp3", "mp4": "m4a"}
+                    audio_format = fmt_map.get(audio_format, audio_format)
+                    content_parts.append({"type": "input_audio", "input_audio": {"data": aud_b64, "format": audio_format}})
+                    has_multimodal = True
+
+            if has_multimodal:
+                result.append({"role": "user", "content": content_parts})
+            else:
+                result.append(llm_msg)
+        else:
+            result.append(llm_msg)
+
+    return result
+
 
 async def generate_session_title(session_id: str, user_msg: str, assistant_reply: str) -> str | None:
     """生成会话标题并保存到数据库，返回标题文本或 None"""
@@ -101,6 +184,12 @@ async def chat_stream(
         logger.warning("Sandbox Unavailable")
         enable_code_exec = False
 
+    # 历史消息多模态富化：sandbox 不可用且模型支持图像/音频时，将历史附件注入上下文
+    if not enable_code_exec and (model_info.get("accept_image") or model_info.get("accept_audio")):
+        messages_for_llm = await _enrich_history_multimodal(
+            messages_for_llm, history, db, session_id, model_info
+        )
+
     # 准备工具
     tools_registry: Dict[str, Any] = {}
     tools_for_llm = []
@@ -125,10 +214,18 @@ async def chat_stream(
         tools_for_llm.append(global_tools_for_llm["exec_shell"])
         tools_registry["exec_python"] = global_tools_registry["exec_python"]
         tools_for_llm.append(global_tools_for_llm["exec_python"])
-        tools_registry["describe_image"] = global_tools_registry["describe_image"]
-        tools_for_llm.append(global_tools_for_llm["describe_image"])
-        tools_registry["describe_audio"] = global_tools_registry["describe_audio"]
-        tools_for_llm.append(global_tools_for_llm["describe_audio"])
+        if model_info.get("accept_image"):
+            tools_registry["read_image"] = global_tools_registry["read_image"]
+            tools_for_llm.append(global_tools_for_llm["read_image"])
+        else:
+            tools_registry["describe_image"] = global_tools_registry["describe_image"]
+            tools_for_llm.append(global_tools_for_llm["describe_image"])
+        if model_info.get("accept_audio"):
+            tools_registry["read_audio"] = global_tools_registry["read_audio"]
+            tools_for_llm.append(global_tools_for_llm["read_audio"])
+        else:
+            tools_registry["describe_audio"] = global_tools_registry["describe_audio"]
+            tools_for_llm.append(global_tools_for_llm["describe_audio"])
         tools_for_llm.append(
             get_tool_definition(
                 name="export_file",
@@ -183,7 +280,39 @@ async def chat_stream(
         await db.execute("UPDATE files SET message_id = ? WHERE id = ?", (message_id, att["id"]))
     await db.commit()
 
-    messages_for_llm.append({"role": "user", "content": final_message})
+    # 构建用户消息：仅当 sandbox 不可用时，将图片/音频作为多模态内容注入。
+    # sandbox 可用时文件已在 /workspace/ 中，LLM 通过 read_image/read_audio 工具访问。
+    accept_img = model_info.get("accept_image")
+    accept_aud = model_info.get("accept_audio")
+    if not enable_code_exec and (accept_img or accept_aud):
+        content_parts = [{"type": "text", "text": final_message}]
+        has_multimodal = False
+        for att in valid_attachments:
+            mime = att["mime_type"]
+            if accept_img and mime.startswith("image/"):
+                async with aiofiles.open(att["file_path"], mode='rb') as f:
+                    img_bytes = await f.read()
+                fmt = mime.split("/")[-1]
+                compressed, final_fmt = await _compress_image_if_needed(img_bytes, fmt)
+                final_mime = f"image/{final_fmt}"
+                b64 = base64.b64encode(compressed).decode("utf-8")
+                content_parts.append({"type": "image_url", "image_url": {"url": f"data:{final_mime};base64,{b64}"}})
+                has_multimodal = True
+            elif accept_aud and mime.startswith("audio/"):
+                async with aiofiles.open(att["file_path"], mode='rb') as f:
+                    aud_bytes = await f.read()
+                aud_b64 = base64.b64encode(aud_bytes).decode("utf-8")
+                audio_format = mime.split("/")[-1]
+                fmt_map = {"mpeg": "mp3", "mp4": "m4a"}
+                audio_format = fmt_map.get(audio_format, audio_format)
+                content_parts.append({"type": "input_audio", "input_audio": {"data": aud_b64, "format": audio_format}})
+                has_multimodal = True
+        if has_multimodal:
+            messages_for_llm.append({"role": "user", "content": content_parts})
+        else:
+            messages_for_llm.append({"role": "user", "content": final_message})
+    else:
+        messages_for_llm.append({"role": "user", "content": final_message})
 
     async def event_generator():
         nonlocal next_seq
@@ -262,13 +391,14 @@ async def chat_stream(
                         logger.info(f"Tool call: {func_name} with args {func_args}")
 
                         # 注入 sandbox 参数
-                        if func_name in ["exec_shell", "exec_python", "describe_image", "describe_audio"]:
+                        if func_name in ["exec_shell", "exec_python", "describe_image", "describe_audio", "read_image", "read_audio"]:
                             func_args["container_id"] = sandbox_id
 
                         # 特殊工具 export_file
                         if func_name == "export_file":
                             if sandbox_id:
-                                file_bytes, filename, mime_type = await download_file_with_meta(sandbox_id, func_args["path"])
+                                sandbox_path = normalize_path(func_args["path"])
+                                file_bytes, filename, mime_type = await download_file_with_meta(sandbox_id, sandbox_path)
                                 saved_file_info = await save_file(session_id, tc_msg_id, file_bytes, filename, mime_type, db)
                                 yield f"data: {json.dumps({'type': 'file', 'content': {'file_id': saved_file_info['file_id']}})}\n\n"
                                 result = f"{filename} exported"
@@ -286,16 +416,55 @@ async def chat_stream(
                         logger.error(f"Tool execution failed: {func_name}, error: {str(e)}")
                         result = f"Error: Tool execution failed - {str(e)}"
 
-                    yield f"data: {json.dumps({'type': 'tool_result', 'content': str(result)})}\n\n"
-                    await save_message_db(db, session_id, next_seq, last_msg_idx + 1, "tool", "tool_result", json.dumps({'tool_call_id': tool_call_id, 'content': str(result)}))
+                    # 判断 result 类型，构建 LLM 消息和 SSE/DB 存储内容
+                    is_multimodal = isinstance(result, dict) and result.get("type") in ("image", "audio")
+                    is_error_dict = isinstance(result, dict) and result.get("type") == "error"
+
+                    if is_error_dict:
+                        display_content = result.get("content", str(result))
+                        db_content = result.get("content", str(result))
+                    elif is_multimodal:
+                        display_content = f"Loaded [{result['type']}]: {result.get('file_path', '')}"
+                        db_content = display_content
+                    else:
+                        display_content = str(result)
+                        db_content = str(result)
+
+                    yield f"data: {json.dumps({'type': 'tool_result', 'content': display_content})}\n\n"
+                    await save_message_db(db, session_id, next_seq, last_msg_idx + 1, "tool", "tool_result", json.dumps({'tool_call_id': tool_call_id, 'content': db_content}))
                     next_seq += 1
 
-                    messages_for_llm.append({
-                        "role": "tool",
-                        "tool_call_id": tool_call_id,
-                        "name": func_name,
-                        "content": str(result)
-                    })
+                    if isinstance(result, dict) and result.get("type") == "image":
+                        data_url = f"data:{result['mime_type']};base64,{result['data']}"
+                        messages_for_llm.append({
+                            "role": "tool",
+                            "tool_call_id": tool_call_id,
+                            "name": func_name,
+                            "content": [
+                                {"type": "text", "text": f"Image loaded: {result.get('file_path', '')}"},
+                                {"type": "image_url", "image_url": {"url": data_url}}
+                            ]
+                        })
+                    elif isinstance(result, dict) and result.get("type") == "audio":
+                        audio_format = result["mime_type"].split("/")[-1]
+                        format_map = {"mpeg": "mp3", "mp4": "m4a"}
+                        audio_format = format_map.get(audio_format, audio_format)
+                        messages_for_llm.append({
+                            "role": "tool",
+                            "tool_call_id": tool_call_id,
+                            "name": func_name,
+                            "content": [
+                                {"type": "text", "text": f"Audio loaded: {result.get('file_path', '')}"},
+                                {"type": "input_audio", "input_audio": {"data": result["data"], "format": audio_format}}
+                            ]
+                        })
+                    else:
+                        messages_for_llm.append({
+                            "role": "tool",
+                            "tool_call_id": tool_call_id,
+                            "name": func_name,
+                            "content": str(result)
+                        })
 
                 continue  # 继续下一轮 LLM 调用
 

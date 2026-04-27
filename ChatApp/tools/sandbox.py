@@ -8,6 +8,15 @@ from ChatApp.config import SANDBOX_SERVICE_URL
 
 logger = logging.getLogger(__name__)
 
+SANDBOX_WORKSPACE = "/workspace"
+
+
+def normalize_path(file_path: str) -> str:
+    """如路径为相对路径，补全 /workspace/ 前缀。Docker get_archive 要求绝对路径。"""
+    if not file_path.startswith("/"):
+        return f"{SANDBOX_WORKSPACE}/{file_path}"
+    return file_path
+
 async def _sandbox_request(
     method: str,
     endpoint: str,
