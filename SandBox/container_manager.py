@@ -272,8 +272,8 @@ class ContainerManager:
             tar_data = b"".join(bits)
             file_content = tar_unpack(tar_data, file_path)
             return file_content
-        except APIError as e:
-            raise RuntimeError(f"Download failed: {e}")
+        except (APIError, FileNotFoundError) as e:
+            raise FileNotFoundError(f"File not found: {file_path}")
 
     def shutdown(self):
         """停止所有容器并关闭 Docker 客户端"""

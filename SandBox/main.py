@@ -113,6 +113,8 @@ async def download_file(container_id: str, path: str):
         content = manager.download_file(container_id, path)
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))
+    except FileNotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e))
     except RuntimeError as e:
         raise HTTPException(status_code=500, detail=str(e))
 
