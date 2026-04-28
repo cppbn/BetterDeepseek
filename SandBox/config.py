@@ -1,7 +1,7 @@
 import os
 
 # 空闲超时（秒）
-IDLE_TIMEOUT = int(os.getenv("IDLE_TIMEOUT", 300))
+IDLE_TIMEOUT = int(os.getenv("IDLE_TIMEOUT", 3600))
 # 最大容器数
 MAX_CONTAINERS = int(os.getenv("MAX_CONTAINERS", 10))
 # 清理扫描间隔（秒）

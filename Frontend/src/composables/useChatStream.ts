@@ -182,8 +182,9 @@ export function useChatStream() {
     if (msgs.length === 0) return;
     const lastUserMsg = [...msgs].reverse().find((m) => m.role === 'user');
     if (!lastUserMsg) return;
-    await sessionStore.deleteMessage(sessionId, lastUserMsg.id);
-    await sendMessage(sessionId, { ...request, message: lastUserMsg.content });
+    const attachments = lastUserMsg.attachments_file_id;
+    await sessionStore.deleteMessage(sessionId, lastUserMsg.id, { keepUserFiles: true });
+    await sendMessage(sessionId, { ...request, message: lastUserMsg.content, attachments_file_id: attachments });
   }
 
   return { sendMessage, isStreaming, stop, regenerate };

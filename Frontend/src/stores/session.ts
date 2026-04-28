@@ -85,8 +85,11 @@ export const useSessionStore = defineStore('session', () => {
     }
   }
 
-  async function deleteMessage(sessionId: string, messageId: number) {
-    await apiClient.delete(`/sessions/${sessionId}/messages/${messageId}`);
+  async function deleteMessage(sessionId: string, messageId: number, opts?: { keepUserFiles?: boolean }) {
+    const params = new URLSearchParams();
+    if (opts?.keepUserFiles) params.set('keep_user_files', 'true');
+    const url = `/sessions/${sessionId}/messages/${messageId}${params.toString() ? '?' + params.toString() : ''}`;
+    await apiClient.delete(url);
     await fetchMessages(sessionId);
   }
 

@@ -150,34 +150,46 @@ async def delete_session(
 async def delete_message(
     session_id: str,
     message_id: int,
+    keep_user_files: bool = False,
     current_user: dict = Depends(get_current_user),
     db: aiosqlite.Connection = Depends(get_db)
 ):
-    """删除指定消息及其后续消息，并清理所有关联资源"""
+    """删除指定消息及其后续消息，并清理所有关联资源。
+    当 keep_user_files=True 时（重新生成场景），保留用户消息附件的磁盘文件并将 file 记录重置为未关联状态"""
     if not await session_belongs_to_user(db, session_id, current_user["id"]):
         logger.warning(f"Unauthorized attempt to delete session {session_id} by user {current_user['id']}")
         raise HTTPException(status_code=404, detail="Session not exists or Unauthenticated")
 
-    cursor = await db.execute("SELECT idx FROM messages WHERE id = ? AND session_id = ?", (message_id, session_id))
+    cursor = await db.execute("SELECT idx, role FROM messages WHERE id = ? AND session_id = ?", (message_id, session_id))
     row = await cursor.fetchone()
     if not row:
         raise HTTPException(status_code=404, detail="Message not found")
     target_idx = row[0]
+    target_role = row[1]
+
+    if keep_user_files and target_role == "user":
+        await db.execute(
+            "UPDATE files SET message_id = NULL WHERE session_id = ? AND message_id = ?",
+            (session_id, message_id)
+        )
+        await db.commit()
+        logger.info(f"Detached files from user message {message_id} for regeneration")
 
     files_cursor = await db.execute(
-        "SELECT file_path FROM files WHERE session_id = ? AND message_id IN (SELECT id FROM messages WHERE session_id = ? AND idx >= ?)",
+        "SELECT file_path, message_id FROM files WHERE session_id = ? AND message_id IN (SELECT id FROM messages WHERE session_id = ? AND idx >= ?)",
         (session_id, session_id, target_idx)
     )
     rows = await files_cursor.fetchall()
-    file_paths = [row[0] for row in rows]
 
-    for path in file_paths:
+    for file_path, file_msg_id in rows:
+        if keep_user_files and target_role == "user" and file_msg_id == message_id:
+            continue
         try:
-            if os.path.exists(path):
-                os.remove(path)
-                logger.info(f"Deleted file: {path}")
+            if os.path.exists(file_path):
+                os.remove(file_path)
+                logger.info(f"Deleted file: {file_path}")
         except Exception as e:
-            logger.warning(f"Failed to delete file {path}: {e}")
+            logger.warning(f"Failed to delete file {file_path}: {e}")
     
     delete_cursor = await db.execute("DELETE FROM messages WHERE session_id = ? AND idx >= ?", (session_id, target_idx))
     await db.commit()

@@ -148,48 +148,9 @@
       </button>
     </div>
   </div>
-  <!-- 文件预览模态框 -->
-  <div
-    v-if="previewVisible"
-    class="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-50"
-    @click.self="closePreview"
-  >
-    <div class="bg-white rounded-lg shadow-xl w-4/5 h-4/5 flex flex-col">
-      <div class="flex justify-between items-center px-4 py-2 border-b">
-        <h3 class="text-lg font-medium">
-          {{ previewFileInfo?.original_filename || '文件预览' }}
-        </h3>
-        <button @click="closePreview" class="text-gray-500 hover:text-gray-700">
-          <XMarkIcon class="w-5 h-5" />
-        </button>
-      </div>
-      <div class="flex-1 p-2 overflow-auto">
-        <iframe
-          v-if="previewUrl"
-          :src="previewUrl"
-          class="w-full h-full border-0"
-          frameborder="0"
-        ></iframe>
-        <div v-else class="flex items-center justify-center h-full text-gray-500">
-          无法预览此文件类型，请下载后查看
-        </div>
-      </div>
-      <!-- <div class="px-4 py-2 border-t flex justify-end">
-        <button
-          @click="downloadPreviewFile"
-          class="px-3 py-1 bg-blue-600 text-white rounded hover:bg-blue-700"
-        >
-          下载
-        </button>
-        <button @click="closePreview" class="ml-2 px-3 py-1 bg-gray-200 rounded hover:bg-gray-300">
-          关闭
-        </button>
-      </div> -->
-    </div>
-  </div>
 </template>
 <script setup lang="ts">
-import { ref, reactive, computed, onMounted, onUnmounted } from 'vue';
+import { ref, reactive, computed, onMounted } from 'vue';
 import {
   WrenchScrewdriverIcon,
   CheckCircleIcon,
@@ -197,7 +158,6 @@ import {
   DocumentIcon as FileIcon,
   ChevronRightIcon,
   ChevronDownIcon,
-  XMarkIcon,
   ClipboardIcon,
   CheckIcon,
   PencilIcon,
@@ -296,54 +256,22 @@ function confirmDelete() {
 const fileInfoMap = reactive<Record<string, FileInfo>>({});
 const loadingMap = reactive<Record<string, boolean>>({});
 
-// 预览模态框状态
-const previewVisible = ref(false);
-const previewUrl = ref<string | null>(null);
-const previewFileInfo = ref<FileInfo | null>(null);
-
-// 关闭预览并释放 blob URL
-function closePreview() {
-  if (previewUrl.value) {
-    URL.revokeObjectURL(previewUrl.value);
-    previewUrl.value = null;
-  }
-  previewVisible.value = false;
-  previewFileInfo.value = null;
-}
-
-// 下载当前预览的文件
-async function downloadPreviewFile() {
-  if (!previewFileInfo.value) return;
-  await downloadFile(previewFileInfo.value.file_id);
-}
-
-// 修改原来的 previewFile 函数
+// 预览文件：在新标签页中打开 blob URL（移动端 iframe 不支持 blob URL）
 async function previewFile(fileId: string) {
   if (!sessionStore.currentSessionId) return;
-  // 先获取文件信息（用于显示文件名）
-  let fileInfo = fileInfoMap[fileId];
-  if (!fileInfo) {
-    try {
-      const { data } = await filesApi.getFileInfo(sessionStore.currentSessionId, fileId);
-      fileInfo = data;
-      fileInfoMap[fileId] = data;
-    } catch (error) {
-      console.error('获取文件信息失败:', error);
-      alert('获取文件信息失败');
-      return;
-    }
+  // 同步打开空白窗口，避免异步请求后被浏览器拦截弹出窗口
+  const previewWindow = window.open('', '_blank');
+  if (!previewWindow) {
+    alert('请允许弹出窗口以预览文件');
+    return;
   }
-  previewFileInfo.value = fileInfo;
-
   try {
     const response = await filesApi.getFileBlob(sessionStore.currentSessionId, fileId);
-    const blob = response.data;
-    // 如果后端返回的 MIME 类型不准确，可以根据文件扩展名补充，此处直接使用 blob.type
-    const url = URL.createObjectURL(blob);
-    previewUrl.value = url;
-    previewVisible.value = true;
+    const url = URL.createObjectURL(response.data);
+    previewWindow.location.href = url;
   } catch (error) {
     console.error('预览失败:', error);
+    previewWindow.close();
     alert('预览失败，请稍后重试');
   }
 }
@@ -378,13 +306,6 @@ async function fetchFileInfo(fileId: string) {
 onMounted(() => {
   if (props.message.attachments_file_id) {
     props.message.attachments_file_id.forEach(fetchFileInfo);
-  }
-});
-
-// 组件卸载时确保释放预览 URL
-onUnmounted(() => {
-  if (previewUrl.value) {
-    URL.revokeObjectURL(previewUrl.value);
   }
 });
 </script>
