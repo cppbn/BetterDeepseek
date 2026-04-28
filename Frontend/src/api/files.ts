@@ -1,6 +1,10 @@
 import { apiClient } from './client';
 import type { FileInfo } from '@/types';
 
+function generateUUID(): string {
+  return crypto.randomUUID();
+}
+
 export const filesApi = {
   // 原有上传
   upload: (sessionId: string, file: File) => {
@@ -9,6 +13,47 @@ export const filesApi = {
     return apiClient.post<FileInfo>(`/sessions/${sessionId}/files`, formData, {
       headers: { 'Content-Type': 'multipart/form-data' },
     });
+  },
+
+  // 分块上传（用于大文件，绕过 Cloudflare 请求体大小限制）
+  uploadLarge: async (
+    sessionId: string,
+    file: File,
+    onProgress?: (pct: number) => void,
+    chunkSize: number = 256 * 1024,
+  ) => {
+    const fileId = generateUUID();
+    const totalChunks = Math.ceil(file.size / chunkSize);
+
+    let lastData: FileInfo | null = null;
+
+    for (let i = 0; i < totalChunks; i++) {
+      const start = i * chunkSize;
+      const end = Math.min(start + chunkSize, file.size);
+      const blob = file.slice(start, end);
+
+      const formData = new FormData();
+      formData.append('file_id', fileId);
+      formData.append('chunk_index', String(i));
+      formData.append('total_chunks', String(totalChunks));
+      formData.append('original_filename', file.name);
+      formData.append('mime_type', file.type || 'application/octet-stream');
+      formData.append('chunk', blob, file.name);
+
+      const { data } = await apiClient.post<FileInfo>(
+        `/sessions/${sessionId}/files/chunked`,
+        formData,
+        { headers: { 'Content-Type': 'multipart/form-data' } },
+      );
+
+      if (i === totalChunks - 1) {
+        lastData = data;
+      }
+
+      onProgress?.(Math.round(((i + 1) / totalChunks) * 100));
+    }
+
+    return { data: lastData! };
   },
 
   // 获取文件元信息

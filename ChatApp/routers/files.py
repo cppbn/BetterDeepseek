@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, status
+from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form
 from fastapi.responses import FileResponse
 import aiosqlite
 import aiofiles
@@ -51,6 +51,65 @@ async def upload_file(
 
     logger.info(f"File uploaded: {original_filename} (id={file_id}) to session {session_id}")
     return {"file_id": file_id, "original_filename": original_filename, "file_size": file_size}
+
+
+@router.post("/chunked")
+async def upload_file_chunked(
+    session_id: str,
+    file_id: str = Form(...),
+    chunk_index: int = Form(...),
+    total_chunks: int = Form(...),
+    original_filename: str = Form(...),
+    mime_type: str = Form("application/octet-stream"),
+    chunk: UploadFile = File(...),
+    current_user: dict = Depends(get_current_user),
+    db: aiosqlite.Connection = Depends(get_db)
+):
+    """分块上传文件，用于绕过反向代理/Cloudflare 的请求体大小限制"""
+    if not await session_belongs_to_user(db, session_id, current_user["id"]):
+        raise HTTPException(status_code=404, detail="Session not exists or Unauthenticated")
+
+    temp_dir = os.path.join(UPLOAD_DIR, session_id, ".chunks")
+    os.makedirs(temp_dir, exist_ok=True)
+    temp_path = os.path.join(temp_dir, f"{file_id}.tmp")
+
+    try:
+        chunk_data = await chunk.read()
+    except Exception as e:
+        logger.error(f"Failed to read chunk {chunk_index} for {original_filename}: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to read chunk: {str(e)}")
+
+    try:
+        mode = "ab" if chunk_index > 0 else "wb"
+        async with aiofiles.open(temp_path, mode) as f:
+            await f.write(chunk_data)
+    except Exception as e:
+        logger.error(f"Failed to write chunk {chunk_index} for {original_filename}: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to write chunk: {str(e)}")
+
+    if chunk_index == total_chunks - 1:
+        ext = os.path.splitext(original_filename)[1] or ""
+        stored_filename = f"{file_id}{ext}"
+        session_dir = os.path.join(UPLOAD_DIR, session_id)
+        final_path = os.path.join(session_dir, stored_filename)
+
+        try:
+            file_size = os.path.getsize(temp_path)
+            os.rename(temp_path, final_path)
+        except Exception as e:
+            logger.error(f"Failed to finalize chunked upload {original_filename}: {e}")
+            raise HTTPException(status_code=500, detail=f"Failed to finalize upload: {str(e)}")
+
+        await save_file_record_db(
+            db, file_id, session_id, None,
+            original_filename, stored_filename, final_path, file_size,
+            mime_type
+        )
+
+        logger.info(f"Chunked upload complete: {original_filename} (id={file_id}, {total_chunks} chunks, {file_size} bytes)")
+        return {"file_id": file_id, "original_filename": original_filename, "file_size": file_size}
+
+    return {"chunk_index": chunk_index, "received": True}
 
 
 @router.get("/{file_id}")

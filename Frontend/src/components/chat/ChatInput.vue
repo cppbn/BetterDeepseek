@@ -54,21 +54,32 @@
           <div
             v-for="file in selectedFiles"
             :key="file.tempId"
-            class="flex items-center gap-2 bg-gray-100 text-gray-700 px-3 py-1 rounded-full text-sm shadow-sm"
+            class="flex flex-col gap-1 bg-gray-100 text-gray-700 px-3 py-1.5 rounded-full text-sm shadow-sm"
           >
-            <div class="flex-shrink-0 w-6 h-6 flex items-center justify-center">
-              <img
-                v-if="file.previewUrl"
-                :src="file.previewUrl"
-                class="w-6 h-6 object-cover rounded"
-                alt="preview"
-              />
-              <DocumentIcon v-else class="w-4 h-4 text-gray-500" />
+            <div class="flex items-center gap-2">
+              <div class="flex-shrink-0 w-6 h-6 flex items-center justify-center">
+                <img
+                  v-if="file.previewUrl"
+                  :src="file.previewUrl"
+                  class="w-6 h-6 object-cover rounded"
+                  alt="preview"
+                />
+                <DocumentIcon v-else class="w-4 h-4 text-gray-500" />
+              </div>
+              <span class="truncate max-w-[150px]">{{ file.original_filename }}</span>
+              <button @click="removeFile(file.tempId)" class="hover:text-red-500">
+                <XMarkIcon class="w-4 h-4" />
+              </button>
             </div>
-            <span class="truncate max-w-[150px]">{{ file.original_filename }}</span>
-            <button @click="removeFile(file.tempId)" class="hover:text-red-500">
-              <XMarkIcon class="w-4 h-4" />
-            </button>
+            <div
+              v-if="!file.file_id && file.progress > 0"
+              class="w-full h-1 bg-gray-200 rounded-full overflow-hidden"
+            >
+              <div
+                class="h-full bg-blue-500 rounded-full transition-all duration-300"
+                :style="{ width: file.progress + '%' }"
+              ></div>
+            </div>
           </div>
         </div>
 
@@ -149,6 +160,7 @@ interface SelectedFile {
   original_filename: string;
   previewUrl?: string;         // 图片预览的 blob URL
   file_size?: number;
+  progress: number;            // 上传进度 0-100（仅大文件分块上传时使用）
 }
 
 const props = defineProps<{
@@ -192,23 +204,29 @@ async function uploadFiles(files: File[]) {
     original_filename: file.name,
     previewUrl: createPreviewUrl(file),
     file_size: file.size,
+    progress: 0,
   }));
   selectedFiles.value.push(...tempFiles);
 
-  // 2. 逐个上传，更新file_id
+  // 2. 逐个上传，更新file_id（大文件使用分块上传规避 Cloudflare 请求体限制）
+  const LARGE_FILE_THRESHOLD = 1 * 1024 * 1024; // 1MB
   for (let i = 0; i < files.length; i++) {
-    const file = files[i];
-    const tempFile = tempFiles[i];
+    const file = files[i]!;
+    const tempFile = tempFiles[i]!;
     try {
-      const { data } = await filesApi.upload(props.sessionId, file);
+      const result = file.size > LARGE_FILE_THRESHOLD
+        ? await filesApi.uploadLarge(props.sessionId, file, (pct) => {
+            const idx = selectedFiles.value.findIndex(f => f.tempId === tempFile.tempId);
+            if (idx !== -1) selectedFiles.value[idx].progress = pct;
+          })
+        : await filesApi.upload(props.sessionId, file);
       const idx = selectedFiles.value.findIndex(f => f.tempId === tempFile.tempId);
       if (idx !== -1) {
-        selectedFiles.value[idx].file_id = data.file_id;
-        selectedFiles.value[idx].file_size = data.file_size;
+        selectedFiles.value[idx].file_id = result.data.file_id;
+        selectedFiles.value[idx].file_size = result.data.file_size;
       }
     } catch (error) {
       console.error('Upload failed:', file.name, error);
-      // 上传失败则移除该项并释放预览URL
       const idx = selectedFiles.value.findIndex(f => f.tempId === tempFile.tempId);
       if (idx !== -1) {
         if (selectedFiles.value[idx].previewUrl) {
