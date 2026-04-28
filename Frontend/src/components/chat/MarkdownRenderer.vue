@@ -39,7 +39,7 @@ const md = new MarkdownIt({
   highlight: defaultHighlight,
 }).use(texmath, {
   engine: katex,
-  delimiters: ['brackets', 'dollar'],
+  delimiters: ['brackets', 'dollars'],
   katexOptions: { throwOnError: false, output: 'html' }
 });
 
