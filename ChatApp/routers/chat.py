@@ -5,6 +5,7 @@ import httpx
 import json
 import base64
 import logging
+import asyncio
 import aiofiles
 from typing import Dict, Any, Optional
 
@@ -317,187 +318,216 @@ async def chat_stream(
     async def event_generator():
         nonlocal next_seq
         total_usage = {"prompt_tokens": 0, "completion_tokens": 0}
-        while True:
-            if await fastapi_request.is_disconnected():
-                logger.info(f"Client disconnected for session {session_id}")
-                return
 
-            reasoning_content = ""
-            content = ""
+        keepalive_queue: asyncio.Queue = asyncio.Queue()
 
-            headers = llm_provider.get_headers()
+        async def _keepalive_sender():
+            try:
+                while True:
+                    await asyncio.sleep(15)
+                    await keepalive_queue.put(": ping\n\n")
+            except asyncio.CancelledError:
+                pass
 
-            payload = llm_provider.build_payload(
-                model=model_info["model"],
-                messages=llm_provider.convert_messages_to_provider_format(messages_for_llm),
-                tools=tools_for_llm,
-                thinking=model_info["thinking"],
-            )
+        ka_task = asyncio.create_task(_keepalive_sender())
+        try:
+            while True:
+                while not keepalive_queue.empty():
+                    yield keepalive_queue.get_nowait()
+                if await fastapi_request.is_disconnected():
+                    logger.info(f"Client disconnected for session {session_id}")
+                    return
 
-            async with httpx.AsyncClient(timeout=httpx.Timeout(30.0, read=180.0)) as client:
-                async with client.stream("POST", llm_provider.get_api_url(), headers=headers, json=payload) as response:
-                    if response.status_code != 200:
-                        error_text = await response.aread()
-                        logger.error(f"LLM API error {response.status_code}: {error_text}")
-                        yield "data: " + json.dumps({"error": f"LLM error {response.status_code}: {error_text}"}) + "\n\n"
-                        return
-                    current_tool_calls = []
-                    async for event in llm_provider.parse_stream(response):
-                        if await fastapi_request.is_disconnected():
-                            logger.info(f"Client disconnected for session {session_id}")
+                reasoning_content = ""
+                content = ""
+
+                headers = llm_provider.get_headers()
+
+                payload = llm_provider.build_payload(
+                    model=model_info["model"],
+                    messages=llm_provider.convert_messages_to_provider_format(messages_for_llm),
+                    tools=tools_for_llm,
+                    thinking=model_info["thinking"],
+                )
+
+                while not keepalive_queue.empty():
+                    yield keepalive_queue.get_nowait()
+                async with httpx.AsyncClient(timeout=httpx.Timeout(30.0, read=180.0)) as client:
+                    async with client.stream("POST", llm_provider.get_api_url(), headers=headers, json=payload) as response:
+                        if response.status_code != 200:
+                            error_text = await response.aread()
+                            logger.error(f"LLM API error {response.status_code}: {error_text}")
+                            yield "data: " + json.dumps({"error": f"LLM error {response.status_code}: {error_text}"}) + "\n\n"
                             return
-                        if event["type"] == "done":
-                            break
-                        elif event["type"] == "content":
-                            content += event["data"]
-                            yield f"data: {json.dumps({'type': 'content', 'content': event['data']})}\n\n"
-                        elif event["type"] == "reasoning":
-                            reasoning_content += event["data"]
-                            yield f"data: {json.dumps({'type': 'reasoning_content', 'content': event['data']})}\n\n"
-                        elif event["type"] == "tool_calls_complete":
-                            current_tool_calls: list = event["data"]
-                        elif event["type"] == "usage":
-                            usage_data = event["data"]
-                            total_usage["prompt_tokens"] += usage_data.get("prompt_tokens", 0)
-                            total_usage["completion_tokens"] += usage_data.get("completion_tokens", 0)
+                        current_tool_calls = []
+                        async for event in llm_provider.parse_stream(response):
+                            if await fastapi_request.is_disconnected():
+                                logger.info(f"Client disconnected for session {session_id}")
+                                return
+                            if event["type"] == "done":
+                                break
+                            elif event["type"] == "content":
+                                content += event["data"]
+                                yield f"data: {json.dumps({'type': 'content', 'content': event['data']})}\n\n"
+                            elif event["type"] == "reasoning":
+                                reasoning_content += event["data"]
+                                yield f"data: {json.dumps({'type': 'reasoning_content', 'content': event['data']})}\n\n"
+                            elif event["type"] == "tool_calls_complete":
+                                current_tool_calls: list = event["data"]
+                            elif event["type"] == "usage":
+                                usage_data = event["data"]
+                                total_usage["prompt_tokens"] += usage_data.get("prompt_tokens", 0)
+                                total_usage["completion_tokens"] += usage_data.get("completion_tokens", 0)
+                            while not keepalive_queue.empty():
+                                yield keepalive_queue.get_nowait()
 
-            # 处理工具调用
-            if current_tool_calls:
-                
-                assistant_msg = {
-                    "role": "assistant",
-                    "reasoning_content": reasoning_content if reasoning_content else None,
-                    "content": content if content else None,
-                    "tool_calls": current_tool_calls,
-                }
-                messages_for_llm.append(assistant_msg)
-                if reasoning_content:
-                    await save_message_db(db, session_id, next_seq, last_msg_idx + 1, "assistant", "reasoning", reasoning_content)
-                    next_seq += 1
-                if content:
-                    await save_message_db(db, session_id, next_seq, last_msg_idx + 1, "assistant", "message", content)
-                    next_seq += 1
-
-                for tc in current_tool_calls:
-                    func_name = tc["function"]["name"]
-                    func_args_str = tc["function"]["arguments"]
-                    tool_call_id = tc["id"]
-
-                    try:
-                        func_args = json.loads(func_args_str)
-                        yield f"data: {json.dumps({'type': 'tool_call', 'content': {'name': func_name, 'args': func_args}})}\n\n"
-                        tc_msg_id = await save_message_db(db, session_id, next_seq, last_msg_idx + 1, "assistant", "tool_call", json.dumps({'name': func_name, 'args': func_args, 'id': tool_call_id}))
+                # 处理工具调用
+                if current_tool_calls:
+                    
+                    assistant_msg = {
+                        "role": "assistant",
+                        "reasoning_content": reasoning_content if reasoning_content else None,
+                        "content": content if content else None,
+                        "tool_calls": current_tool_calls,
+                    }
+                    messages_for_llm.append(assistant_msg)
+                    if reasoning_content:
+                        await save_message_db(db, session_id, next_seq, last_msg_idx + 1, "assistant", "reasoning", reasoning_content)
                         next_seq += 1
-                        logger.info(f"Tool call: {func_name} with args {func_args}")
+                    if content:
+                        await save_message_db(db, session_id, next_seq, last_msg_idx + 1, "assistant", "message", content)
+                        next_seq += 1
 
-                        # 注入 sandbox 参数
-                        if func_name in ["exec_shell", "exec_python", "describe_image", "describe_audio", "read_image", "read_audio"]:
-                            func_args["container_id"] = sandbox_id
+                    for tc in current_tool_calls:
+                        while not keepalive_queue.empty():
+                            yield keepalive_queue.get_nowait()
+                        func_name = tc["function"]["name"]
+                        func_args_str = tc["function"]["arguments"]
+                        tool_call_id = tc["id"]
 
-                        # 特殊工具 export_file
-                        if func_name == "export_file":
-                            if sandbox_id:
-                                sandbox_path = normalize_path(func_args["path"])
-                                file_bytes, filename, mime_type = await download_file_with_meta(sandbox_id, sandbox_path)
-                                saved_file_info = await save_file(session_id, tc_msg_id, file_bytes, filename, mime_type, db)
-                                yield f"data: {json.dumps({'type': 'file', 'content': {'file_id': saved_file_info['file_id']}})}\n\n"
-                                result = f"{filename} exported"
-                                logger.info(f"File exported: {filename}")
-                            else:
-                                result = "Error: sandbox not available for export_file"
-                        elif func_name in tools_registry:
-                            result = await tools_registry[func_name](**func_args)
-                        else:
-                            result = f"Error: Unknown tool {func_name}"
-
-                    except json.JSONDecodeError:
-                        result = f"Error: Invalid arguments JSON: {func_args_str}"
-                    except Exception as e:
-                        logger.error(f"Tool execution failed: {func_name}, error: {str(e)}")
-                        result = f"Error: Tool execution failed - {str(e)}"
-
-                    # 判断 result 类型，构建 LLM 消息和 SSE/DB 存储内容
-                    is_multimodal = isinstance(result, dict) and result.get("type") in ("image", "audio")
-                    is_error_dict = isinstance(result, dict) and result.get("type") == "error"
-
-                    if is_error_dict:
-                        display_content = result.get("content", str(result))
-                        db_content = result.get("content", str(result))
-                    elif is_multimodal:
-                        display_content = f"Loaded [{result['type']}]: {result.get('file_path', '')}"
-                        db_content = display_content
-                    else:
-                        display_content = str(result)
-                        db_content = str(result)
-
-                    yield f"data: {json.dumps({'type': 'tool_result', 'content': display_content})}\n\n"
-                    await save_message_db(db, session_id, next_seq, last_msg_idx + 1, "tool", "tool_result", json.dumps({'tool_call_id': tool_call_id, 'content': db_content}))
-                    next_seq += 1
-
-                    if isinstance(result, dict) and result.get("type") == "image":
-                        data_url = f"data:{result['mime_type']};base64,{result['data']}"
-                        messages_for_llm.append({
-                            "role": "tool",
-                            "tool_call_id": tool_call_id,
-                            "name": func_name,
-                            "content": [
-                                {"type": "text", "text": f"Image loaded: {result.get('file_path', '')}"},
-                                {"type": "image_url", "image_url": {"url": data_url}}
-                            ]
-                        })
-                    elif isinstance(result, dict) and result.get("type") == "audio":
-                        audio_format = result["mime_type"].split("/")[-1]
-                        format_map = {"mpeg": "mp3", "mp4": "m4a"}
-                        audio_format = format_map.get(audio_format, audio_format)
-                        messages_for_llm.append({
-                            "role": "tool",
-                            "tool_call_id": tool_call_id,
-                            "name": func_name,
-                            "content": [
-                                {"type": "text", "text": f"Audio loaded: {result.get('file_path', '')}"},
-                                {"type": "input_audio", "input_audio": {"data": result["data"], "format": audio_format}}
-                            ]
-                        })
-                    else:
-                        messages_for_llm.append({
-                            "role": "tool",
-                            "tool_call_id": tool_call_id,
-                            "name": func_name,
-                            "content": str(result)
-                        })
-
-                continue  # 继续下一轮 LLM 调用
-
-            else:
-                # 无工具调用，结束
-                if reasoning_content:
-                    await save_message_db(db, session_id, next_seq, last_msg_idx + 1, "assistant", "reasoning", reasoning_content)
-                    next_seq += 1
-                if content:
-                    await save_message_db(db, session_id, next_seq, last_msg_idx + 1, "assistant", "message", content)
-                    next_seq += 1
-                logger.info(f"Chat stream finished for session {session_id}")
-
-                if total_usage.get("prompt_tokens") or total_usage.get("completion_tokens"):
-                    try:
-                        await save_token_usage_db(
-                            db, session_id, current_user["id"], model_info["model"],
-                            total_usage["prompt_tokens"], total_usage["completion_tokens"]
-                        )
-                    except Exception:
-                        pass
-
-                # 标题自动生成（仅首次对话且无标题时）
-                if not await get_session_title_db(db, session_id):
-                    first_user_msg = next((m["content"] for m in messages_for_llm if m["role"] == "user"), None)
-                    if first_user_msg and content:
                         try:
-                            title = await generate_session_title(session_id, first_user_msg, content)
-                            if title:
-                                yield f"data: {json.dumps({'type': 'title', 'content': title})}\n\n"
+                            func_args = json.loads(func_args_str)
+                            yield f"data: {json.dumps({'type': 'tool_call', 'content': {'name': func_name, 'args': func_args}})}\n\n"
+                            tc_msg_id = await save_message_db(db, session_id, next_seq, last_msg_idx + 1, "assistant", "tool_call", json.dumps({'name': func_name, 'args': func_args, 'id': tool_call_id}))
+                            next_seq += 1
+                            logger.info(f"Tool call: {func_name} with args {func_args}")
+
+                            # 注入 sandbox 参数
+                            if func_name in ["exec_shell", "exec_python", "describe_image", "describe_audio", "read_image", "read_audio"]:
+                                func_args["container_id"] = sandbox_id
+
+                            # 特殊工具 export_file
+                            if func_name == "export_file":
+                                if sandbox_id:
+                                    sandbox_path = normalize_path(func_args["path"])
+                                    file_bytes, filename, mime_type = await download_file_with_meta(sandbox_id, sandbox_path)
+                                    saved_file_info = await save_file(session_id, tc_msg_id, file_bytes, filename, mime_type, db)
+                                    yield f"data: {json.dumps({'type': 'file', 'content': {'file_id': saved_file_info['file_id']}})}\n\n"
+                                    result = f"{filename} exported"
+                                    logger.info(f"File exported: {filename}")
+                                else:
+                                    result = "Error: sandbox not available for export_file"
+                            elif func_name in tools_registry:
+                                result = await tools_registry[func_name](**func_args)
+                            else:
+                                result = f"Error: Unknown tool {func_name}"
+
+                        except json.JSONDecodeError:
+                            result = f"Error: Invalid arguments JSON: {func_args_str}"
+                        except Exception as e:
+                            logger.error(f"Tool execution failed: {func_name}, error: {str(e)}")
+                            result = f"Error: Tool execution failed - {str(e)}"
+
+                        # 判断 result 类型，构建 LLM 消息和 SSE/DB 存储内容
+                        is_multimodal = isinstance(result, dict) and result.get("type") in ("image", "audio")
+                        is_error_dict = isinstance(result, dict) and result.get("type") == "error"
+
+                        if is_error_dict:
+                            display_content = result.get("content", str(result))
+                            db_content = result.get("content", str(result))
+                        elif is_multimodal:
+                            display_content = f"Loaded [{result['type']}]: {result.get('file_path', '')}"
+                            db_content = display_content
+                        else:
+                            display_content = str(result)
+                            db_content = str(result)
+
+                        yield f"data: {json.dumps({'type': 'tool_result', 'content': display_content})}\n\n"
+                        while not keepalive_queue.empty():
+                            yield keepalive_queue.get_nowait()
+                        await save_message_db(db, session_id, next_seq, last_msg_idx + 1, "tool", "tool_result", json.dumps({'tool_call_id': tool_call_id, 'content': db_content}))
+                        next_seq += 1
+
+                        if isinstance(result, dict) and result.get("type") == "image":
+                            data_url = f"data:{result['mime_type']};base64,{result['data']}"
+                            messages_for_llm.append({
+                                "role": "tool",
+                                "tool_call_id": tool_call_id,
+                                "name": func_name,
+                                "content": [
+                                    {"type": "text", "text": f"Image loaded: {result.get('file_path', '')}"},
+                                    {"type": "image_url", "image_url": {"url": data_url}}
+                                ]
+                            })
+                        elif isinstance(result, dict) and result.get("type") == "audio":
+                            audio_format = result["mime_type"].split("/")[-1]
+                            format_map = {"mpeg": "mp3", "mp4": "m4a"}
+                            audio_format = format_map.get(audio_format, audio_format)
+                            messages_for_llm.append({
+                                "role": "tool",
+                                "tool_call_id": tool_call_id,
+                                "name": func_name,
+                                "content": [
+                                    {"type": "text", "text": f"Audio loaded: {result.get('file_path', '')}"},
+                                    {"type": "input_audio", "input_audio": {"data": result["data"], "format": audio_format}}
+                                ]
+                            })
+                        else:
+                            messages_for_llm.append({
+                                "role": "tool",
+                                "tool_call_id": tool_call_id,
+                                "name": func_name,
+                                "content": str(result)
+                            })
+
+                    continue  # 继续下一轮 LLM 调用
+
+                else:
+                    # 无工具调用，结束
+                    if reasoning_content:
+                        await save_message_db(db, session_id, next_seq, last_msg_idx + 1, "assistant", "reasoning", reasoning_content)
+                        next_seq += 1
+                    if content:
+                        await save_message_db(db, session_id, next_seq, last_msg_idx + 1, "assistant", "message", content)
+                        next_seq += 1
+                    logger.info(f"Chat stream finished for session {session_id}")
+
+                    if total_usage.get("prompt_tokens") or total_usage.get("completion_tokens"):
+                        try:
+                            await save_token_usage_db(
+                                db, session_id, current_user["id"], model_info["model"],
+                                total_usage["prompt_tokens"], total_usage["completion_tokens"]
+                            )
                         except Exception:
                             pass
-                return
+
+                    # 标题自动生成（仅首次对话且无标题时）
+                    if not await get_session_title_db(db, session_id):
+                        first_user_msg = next((m["content"] for m in messages_for_llm if m["role"] == "user"), None)
+                        if first_user_msg and content:
+                            try:
+                                title = await generate_session_title(session_id, first_user_msg, content)
+                                if title:
+                                    yield f"data: {json.dumps({'type': 'title', 'content': title})}\n\n"
+                            except Exception:
+                                pass
+                    return
+        finally:
+            ka_task.cancel()
+            try:
+                await ka_task
+            except asyncio.CancelledError:
+                pass
 
     return StreamingResponse(
         event_generator(),
