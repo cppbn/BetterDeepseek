@@ -213,6 +213,48 @@ async def _describe_image_tool(container_id: str, file_path: str, question: str 
 
 
 @llm_tool(
+    name="get_time",
+    description="Get the current date and time. Use this when you need to answer questions about what date or time it is now.",
+    parameters=[
+        {"name": "timezone", "description": "IANA timezone name (e.g. 'Asia/Shanghai', 'America/New_York', 'UTC'). Default: 'Asia/Shanghai'.", "required": False}
+    ]
+)
+async def _get_time_tool(timezone: str = "Asia/Shanghai") -> str:
+    import datetime
+    try:
+        from zoneinfo import ZoneInfo
+    except ImportError:
+        from backports import zoneinfo as ZoneInfo
+    try:
+        tz = ZoneInfo(timezone)
+        now = datetime.datetime.now(tz)
+    except Exception:
+        now = datetime.datetime.now(datetime.timezone.utc)
+        tz_name = "UTC"
+    else:
+        tz_name = timezone
+    return now.strftime(f"%Y-%m-%d %H:%M:%S %Z ({tz_name})  %A, week %W")
+
+@llm_tool(
+    name="read_txt",
+    description="Read a text file from the sandbox. Use this to view the contents of .txt, .md, .py, .json, .csv, .log, .yaml, .cfg, .env and other text-based files.",
+    parameters=[
+        {"name": "file_path", "description": "Path to the text file in the sandbox, e.g. /workspace/output.txt"},
+        {"name": "max_chars", "description": "Maximum characters to return (default 5000)", "type": "integer", "required": False}
+    ]
+)
+async def _read_txt_tool(file_path: str, container_id: str, max_chars: int = 5000) -> str:
+    file_path = sandbox.normalize_path(file_path)
+    content_bytes = await sandbox.download_file_from_sandbox(container_id, file_path)
+    try:
+        text = content_bytes.decode("utf-8")
+    except UnicodeDecodeError:
+        text = content_bytes.decode("latin-1")
+    if len(text) > max_chars:
+        text = text[:max_chars] + f"\n\n[... truncated, {len(text) - max_chars} more characters]"
+    return text
+
+@llm_tool(
     name="read_audio",
     description="Read and listen to an audio file from the sandbox. Use this to hear audio recordings, speech, music, or sound effects.",
     parameters=[

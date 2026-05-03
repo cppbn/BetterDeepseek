@@ -227,6 +227,8 @@ async def chat_stream(
         else:
             tools_registry["describe_audio"] = global_tools_registry["describe_audio"]
             tools_for_llm.append(global_tools_for_llm["describe_audio"])
+        tools_registry["read_txt"] = global_tools_registry["read_txt"]
+        tools_for_llm.append(global_tools_for_llm["read_txt"])
         tools_for_llm.append(
             get_tool_definition(
                 name="export_file",
@@ -234,6 +236,8 @@ async def chat_stream(
                 parameters=[{"name": "path", "description": "the file path"}]
             )
         )
+    tools_registry["get_time"] = global_tools_registry["get_time"]
+    tools_for_llm.append(global_tools_for_llm["get_time"])
     if enable_search:
         tools_registry["web_search"] = global_tools_registry["web_search"]
         tools_for_llm.append(global_tools_for_llm["web_search"])
