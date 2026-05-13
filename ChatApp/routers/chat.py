@@ -417,7 +417,7 @@ async def chat_stream(
                             logger.info(f"Tool call: {func_name} with args {func_args}")
 
                             # 注入 sandbox 参数
-                            if func_name in ["exec_shell", "exec_python", "describe_image", "describe_audio", "read_image", "read_audio"]:
+                            if func_name in ["exec_shell", "exec_python", "describe_image", "describe_audio", "read_image", "read_audio", "read_txt"]:
                                 func_args["container_id"] = sandbox_id
 
                             # 特殊工具 export_file
