@@ -80,21 +80,37 @@ async def _exec_shell_tool(container_id: str, cmd: str, timeout: int = 30) -> st
 
 
 @llm_tool(
-    name="web_search",
-    description="Search the web for real-time information using Tavily API.",
+    name="tavily_search",
+    description="Search the web for real-time information using Tavily API. Returns titles, URLs, snippets, and optionally an AI-generated answer and full page content.",
     parameters=[
         {"name": "query", "description": "Search query string"},
         {"name": "max_results", "description": "Maximum number of results (1-20, default 7)", "type": "integer", "required": False},
-        {"name": "search_depth", "description": "Depth of search: 'basic' or 'advanced' (default 'basic')", "required": False},
-        {"name": "topic", "description": "Topic: 'general' or 'news' (default 'general')", "type": "string", "required": False},
+        {"name": "search_depth", "description": "Depth of search: 'basic', 'advanced', 'fast', or 'ultra-fast'. 'advanced' is most thorough but costs 2 API credits. 'fast' and 'ultra-fast' prioritize speed. (default 'basic')", "required": False},
+        {"name": "topic", "description": "Topic: 'general', 'news', or 'finance' (default 'general')", "type": "string", "required": False},
         {"name": "days", "description": "Days back for news search (only if topic='news', default 3)", "type": "integer", "required": False},
+        {"name": "time_range", "description": "Time range filter: 'day', 'week', 'month', or 'year'", "required": False},
+        {"name": "start_date", "description": "Start date filter in YYYY-MM-DD format", "required": False},
+        {"name": "end_date", "description": "End date filter in YYYY-MM-DD format", "required": False},
+        {"name": "include_answer", "description": "Include an AI-generated answer summary of the search results", "type": "boolean", "required": False},
+        {"name": "include_raw_content", "description": "Include the full cleaned content of each result page in markdown format", "type": "boolean", "required": False},
+        {"name": "chunks_per_source", "description": "Number of content chunks per source when search_depth is 'advanced' (1-3, default 3)", "type": "integer", "required": False},
+        {"name": "include_domains", "description": "Comma-separated list of domains to include (e.g. 'wikipedia.org,github.com')", "required": False},
+        {"name": "exclude_domains", "description": "Comma-separated list of domains to exclude (e.g. 'pinterest.com,quora.com')", "required": False},
     ]
 )
-async def _web_search_tool(query: str, max_results: int = 7, search_depth: str = "basic",
-                           topic: str = "general", days: int = 3) -> str:
+async def _tavily_search_tool(query: str, max_results: int = 7, search_depth: str = "basic",
+                           topic: str = "general", days: int = 3, time_range: str = "",
+                           start_date: str = "", end_date: str = "",
+                           include_answer: bool = False, include_raw_content: bool = False,
+                           chunks_per_source: int = 3,
+                           include_domains: str = "", exclude_domains: str = "") -> str:
     from ChatApp.config import TAVILY_API_KEY
     if not TAVILY_API_KEY:
         return "Error: Tavily API key not configured."
+
+    inc_domains = [d.strip() for d in include_domains.split(",") if d.strip()] if include_domains else None
+    exc_domains = [d.strip() for d in exclude_domains.split(",") if d.strip()] if exclude_domains else None
+
     try:
         return await web_search.search_tavily(
             query=query,
@@ -102,7 +118,15 @@ async def _web_search_tool(query: str, max_results: int = 7, search_depth: str =
             max_results=max_results,
             search_depth=search_depth,
             topic=topic,
-            days=days
+            days=days,
+            time_range=time_range,
+            start_date=start_date,
+            end_date=end_date,
+            include_answer=include_answer,
+            include_raw_content=include_raw_content,
+            chunks_per_source=chunks_per_source,
+            include_domains=inc_domains,
+            exclude_domains=exc_domains,
         )
     except Exception as e:
         logger.error(f"Web search failed: {str(e)}")
@@ -110,19 +134,102 @@ async def _web_search_tool(query: str, max_results: int = 7, search_depth: str =
 
 
 @llm_tool(
-    name="fetch_url",
-    description="Fetch and extract main text content from a given URL.",
+    name="tavily_extract",
+    description="Extract and read the full content from one or more web pages using Tavily Extract. Use this to retrieve the complete text of specific URLs in markdown or plain text format. Supports extracting multiple URLs at once.",
     parameters=[
-        {"name": "url", "description": "The URL to fetch", "type": "string"},
-        {"name": "max_length", "description": "Maximum characters to return (default 2000)", "type": "integer", "required": False}
+        {"name": "urls", "description": "Comma-separated list of URLs to extract content from (e.g. 'https://example.com,https://example2.com')"},
+        {"name": "extract_depth", "description": "Extraction depth: 'basic' or 'advanced'. Advanced retrieves tables and embedded content but costs 2 credits per 5 URLs. (default 'basic')", "required": False},
+        {"name": "format", "description": "Content format: 'markdown' or 'text' (default 'markdown')", "required": False},
+        {"name": "query", "description": "Optional user intent to rerank extracted content chunks for relevance", "required": False},
+        {"name": "chunks_per_source", "description": "Max content chunks per URL when query is provided (1-5, default 3)", "type": "integer", "required": False},
     ]
 )
-async def _fetch_url_tool(url: str, max_length: int = 2000) -> str:
+async def _tavily_extract_tool(urls: str, extract_depth: str = "basic",
+                                format: str = "markdown", query: str = "",
+                                chunks_per_source: int = 3) -> str:
+    from ChatApp.config import TAVILY_API_KEY
+    if not TAVILY_API_KEY:
+        return "Error: Tavily API key not configured."
+    url_list = [u.strip() for u in urls.split(",") if u.strip()]
+    if not url_list:
+        return "Error: No valid URLs provided."
     try:
-        return await web_search.fetch_url(url, max_length)
+        return await web_search.tavily_extract(
+            urls=url_list,
+            api_key=TAVILY_API_KEY,
+            extract_depth=extract_depth,
+            format=format,
+            query=query,
+            chunks_per_source=chunks_per_source,
+        )
     except Exception as e:
-        logger.error(f"URL fetch failed: {str(e)}")
-        return f"Error fetching URL: {str(e)}"
+        logger.error(f"Tavily Extract failed: {str(e)}")
+        return f"Error performing Tavily Extract: {str(e)}"
+
+
+@llm_tool(
+    name="tavily_crawl",
+    description="Crawl a website starting from a base URL, following links to explore and extract content from multiple pages. Returns the full content of each crawled page. Useful for comprehensive research across a site.",
+    parameters=[
+        {"name": "url", "description": "The root URL to begin crawling"},
+        {"name": "instructions", "description": "Natural language instructions for the crawler (e.g. 'Find all pages about pricing'). Costs 2 credits per 10 pages when specified.", "required": False},
+        {"name": "max_depth", "description": "Max depth of crawl from the base URL (1-5, default 1)", "type": "integer", "required": False},
+        {"name": "max_breadth", "description": "Max links to follow per page (1-500, default 20)", "type": "integer", "required": False},
+        {"name": "limit", "description": "Total number of links to process before stopping (default 50)", "type": "integer", "required": False},
+        {"name": "extract_depth", "description": "Extraction depth: 'basic' or 'advanced' (default 'basic')", "required": False},
+        {"name": "format", "description": "Content format: 'markdown' or 'text' (default 'markdown')", "required": False},
+    ]
+)
+async def _tavily_crawl_tool(url: str, instructions: str = "", max_depth: int = 1,
+                              max_breadth: int = 20, limit: int = 50,
+                              extract_depth: str = "basic", format: str = "markdown") -> str:
+    from ChatApp.config import TAVILY_API_KEY
+    if not TAVILY_API_KEY:
+        return "Error: Tavily API key not configured."
+    try:
+        return await web_search.tavily_crawl(
+            url=url,
+            api_key=TAVILY_API_KEY,
+            instructions=instructions,
+            max_depth=max_depth,
+            max_breadth=max_breadth,
+            limit=limit,
+            extract_depth=extract_depth,
+            format=format,
+        )
+    except Exception as e:
+        logger.error(f"Tavily Crawl failed: {str(e)}")
+        return f"Error performing Tavily Crawl: {str(e)}"
+
+
+@llm_tool(
+    name="tavily_map",
+    description="Map a website's structure starting from a base URL. Discovers and lists all URLs across the site without extracting full page content. Use this to understand a site's structure before deciding which pages to extract or crawl.",
+    parameters=[
+        {"name": "url", "description": "The root URL to begin mapping"},
+        {"name": "instructions", "description": "Natural language instructions to filter which pages to discover (e.g. 'Find all documentation pages'). Costs 2 credits per 10 pages when specified.", "required": False},
+        {"name": "max_depth", "description": "Max depth of mapping from the base URL (1-5, default 1)", "type": "integer", "required": False},
+        {"name": "max_breadth", "description": "Max links to follow per page (1-500, default 20)", "type": "integer", "required": False},
+        {"name": "limit", "description": "Total number of links to process before stopping (default 50)", "type": "integer", "required": False},
+    ]
+)
+async def _tavily_map_tool(url: str, instructions: str = "", max_depth: int = 1,
+                            max_breadth: int = 20, limit: int = 50) -> str:
+    from ChatApp.config import TAVILY_API_KEY
+    if not TAVILY_API_KEY:
+        return "Error: Tavily API key not configured."
+    try:
+        return await web_search.tavily_map(
+            url=url,
+            api_key=TAVILY_API_KEY,
+            instructions=instructions,
+            max_depth=max_depth,
+            max_breadth=max_breadth,
+            limit=limit,
+        )
+    except Exception as e:
+        logger.error(f"Tavily Map failed: {str(e)}")
+        return f"Error performing Tavily Map: {str(e)}"
 
 import base64
 import mimetypes

@@ -239,10 +239,14 @@ async def chat_stream(
     tools_registry["get_time"] = global_tools_registry["get_time"]
     tools_for_llm.append(global_tools_for_llm["get_time"])
     if enable_search:
-        tools_registry["web_search"] = global_tools_registry["web_search"]
-        tools_for_llm.append(global_tools_for_llm["web_search"])
-        tools_registry["fetch_url"] = global_tools_registry["fetch_url"]
-        tools_for_llm.append(global_tools_for_llm["fetch_url"])
+        tools_registry["tavily_search"] = global_tools_registry["tavily_search"]
+        tools_for_llm.append(global_tools_for_llm["tavily_search"])
+        tools_registry["tavily_extract"] = global_tools_registry["tavily_extract"]
+        tools_for_llm.append(global_tools_for_llm["tavily_extract"])
+        tools_registry["tavily_crawl"] = global_tools_registry["tavily_crawl"]
+        tools_for_llm.append(global_tools_for_llm["tavily_crawl"])
+        tools_registry["tavily_map"] = global_tools_registry["tavily_map"]
+        tools_for_llm.append(global_tools_for_llm["tavily_map"])
 
     # 系统提示词
     if enable_code_exec:

@@ -2,19 +2,10 @@ import json
 from typing import Dict, Any, List, Optional
 
 import httpx
-from bs4 import BeautifulSoup
-from readability import Document
-
-from playwright.async_api import async_playwright, Browser, Page
 
 DEFAULT_TIMEOUT = 10.0
+TAVILY_BASE_URL = "https://api.tavily.com"
 
-
-async def _tidy_text(text: str) -> str:
-    """清理文本，去除多余空白和换行符"""
-    if not text:
-        return ""
-    return " ".join(text.strip().split())
 
 async def search_tavily(
     query: str,
@@ -26,140 +17,247 @@ async def search_tavily(
     time_range: str = "",
     start_date: str = "",
     end_date: str = "",
+    include_answer: bool = False,
+    include_raw_content: bool = False,
+    chunks_per_source: int = 3,
+    include_domains: Optional[List[str]] = None,
+    exclude_domains: Optional[List[str]] = None,
+    country: str = "",
 ) -> str:
-    """
-    使用 Tavily API 进行网络搜索。
-
-    Args:
-        query: 搜索查询
-        api_key: Tavily API 密钥
-        max_results: 最大结果数（5-20，默认 7）
-        search_depth: 搜索深度，"basic" 或 "advanced"
-        topic: 主题，"general" 或 "news"
-        days: 新闻搜索时回溯的天数（仅当 topic="news" 时生效）
-        time_range: 时间范围，"day", "week", "month", "year"
-        start_date: 起始日期 YYYY-MM-DD
-        end_date: 结束日期 YYYY-MM-DD
-
-    Returns:
-        JSON 字符串，包含 results 列表，每个结果包含 title, url, snippet, index
-    """
-    url = "https://api.tavily.com/search"
+    url = f"{TAVILY_BASE_URL}/search"
     headers = {
         "Authorization": f"Bearer {api_key}",
         "Content-Type": "application/json",
     }
+
+    valid_depths = ("basic", "advanced", "fast", "ultra-fast")
+    valid_topics = ("general", "news", "finance")
+
     payload: Dict[str, Any] = {
         "query": query,
         "max_results": max_results,
         "include_favicon": True,
-        "search_depth": search_depth if search_depth in ("basic", "advanced") else "basic",
-        "topic": topic if topic in ("general", "news") else "general",
+        "search_depth": search_depth if search_depth in valid_depths else "basic",
+        "topic": topic if topic in valid_topics else "general",
     }
 
-    if topic == "news":
+    if search_depth == "advanced":
+        payload["chunks_per_source"] = max(1, min(3, chunks_per_source))
+
+    if topic == "news" and days:
         payload["days"] = days
-    if time_range in ("day", "week", "month", "year"):
+    if time_range in ("day", "week", "month", "year", "d", "w", "m", "y"):
         payload["time_range"] = time_range
     if start_date:
         payload["start_date"] = start_date
     if end_date:
         payload["end_date"] = end_date
+    if include_answer:
+        payload["include_answer"] = "basic"
+    if include_raw_content:
+        payload["include_raw_content"] = "markdown"
+    if include_domains:
+        payload["include_domains"] = include_domains
+    if exclude_domains:
+        payload["exclude_domains"] = exclude_domains
+    if country and topic == "general":
+        payload["country"] = country
 
     async with httpx.AsyncClient() as client:
-        resp = await client.post(url, json=payload, headers=headers, timeout=30.0)
+        resp = await client.post(url, json=payload, headers=headers, timeout=60.0)
         if resp.status_code != 200:
             raise Exception(f"Tavily API error: {resp.text} (status {resp.status_code})")
         data = resp.json()
 
     results = []
     for item in data.get("results", []):
-        results.append({
+        result = {
             "title": item.get("title", ""),
             "url": item.get("url", ""),
             "snippet": item.get("content", ""),
             "favicon": item.get("favicon", ""),
-        })
+            "score": item.get("score", 0),
+        }
+        if include_raw_content and item.get("raw_content"):
+            result["raw_content"] = item.get("raw_content", "")
+        results.append(result)
 
-    if not results:
+    output: Dict[str, Any] = {"results": results}
+
+    answer = data.get("answer")
+    if answer:
+        output["answer"] = answer
+
+    if not results and not answer:
         return "Error: Tavily search returned no results."
 
     ref_uuid = str(hash(query))[-4:]
-    for idx, res in enumerate(results, 1):
-        res["index"] = f"{ref_uuid}.{idx}"
+    for idx, result in enumerate(results, 1):
+        result["index"] = f"{ref_uuid}.{idx}"
 
-    return json.dumps({"results": results}, ensure_ascii=False)
-
-# ---------- Playwright 浏览器单例管理 ----------
-_browser: Optional[Browser] = None
-_playwright_instance = None
+    return json.dumps(output, ensure_ascii=False)
 
 
-async def _get_browser() -> Browser:
-    """获取全局复用的浏览器实例（懒加载）"""
-    global _browser, _playwright_instance
-    if _browser is None or not _browser.is_connected():
-        if _playwright_instance is None:
-            _playwright_instance = await async_playwright().start()
-        _browser = await _playwright_instance.chromium.launch(
-            headless=True,
-            args=['--disable-blink-features=AutomationControlled', '--no-sandbox', '--disable-dev-shm-usage']
-        )
-    return _browser
+async def tavily_extract(
+    urls: List[str],
+    api_key: str,
+    extract_depth: str = "basic",
+    format: str = "markdown",
+    query: str = "",
+    chunks_per_source: int = 3,
+    timeout: Optional[float] = None,
+) -> str:
+    url = f"{TAVILY_BASE_URL}/extract"
+    headers = {
+        "Authorization": f"Bearer {api_key}",
+        "Content-Type": "application/json",
+    }
+
+    valid_depths = ("basic", "advanced")
+    valid_formats = ("markdown", "text")
+
+    payload: Dict[str, Any] = {
+        "urls": urls,
+        "extract_depth": extract_depth if extract_depth in valid_depths else "basic",
+        "format": format if format in valid_formats else "markdown",
+        "include_favicon": True,
+    }
+
+    if query:
+        payload["query"] = query
+        payload["chunks_per_source"] = max(1, min(5, chunks_per_source))
+    if timeout is not None:
+        payload["timeout"] = max(1.0, min(60.0, float(timeout)))
+
+    async with httpx.AsyncClient() as client:
+        resp = await client.post(url, json=payload, headers=headers, timeout=90.0)
+        if resp.status_code != 200:
+            raise Exception(f"Tavily Extract API error: {resp.text} (status {resp.status_code})")
+        data = resp.json()
+
+    extracted = []
+    for item in data.get("results", []):
+        extracted.append({
+            "url": item.get("url", ""),
+            "content": item.get("raw_content", ""),
+            "favicon": item.get("favicon", ""),
+        })
+
+    failed = data.get("failed_results", [])
+
+    output: Dict[str, Any] = {"results": extracted}
+    if failed:
+        output["failed_results"] = failed
+    if not extracted and not failed:
+        return "Error: Tavily Extract returned no results."
+
+    return json.dumps(output, ensure_ascii=False)
 
 
-async def close_browser():
-    """清理浏览器资源（应在应用 shutdown 时调用）"""
-    global _browser, _playwright_instance
-    if _browser:
-        try:
-            await _browser.close()
-        except Exception:
-            pass
-        _browser = None
-    if _playwright_instance:
-        try:
-            await _playwright_instance.stop()
-        except Exception:
-            pass
-        _playwright_instance = None
+async def tavily_crawl(
+    url: str,
+    api_key: str,
+    instructions: str = "",
+    max_depth: int = 1,
+    max_breadth: int = 20,
+    limit: int = 50,
+    extract_depth: str = "basic",
+    format: str = "markdown",
+    include_images: bool = False,
+    timeout: Optional[float] = None,
+) -> str:
+    endpoint = f"{TAVILY_BASE_URL}/crawl"
+    headers = {
+        "Authorization": f"Bearer {api_key}",
+        "Content-Type": "application/json",
+    }
 
-async def fetch_url(url: str, max_length: int = 2000) -> str:
-    """
-    使用 Playwright 抓取网页完整渲染内容，并提取可读文本。
+    valid_depths = ("basic", "advanced")
+    valid_formats = ("markdown", "text")
 
-    Args:
-        url: 要抓取的网页地址
-        max_length: 返回文本的最大长度（默认 2000）
+    payload: Dict[str, Any] = {
+        "url": url,
+        "max_depth": max(1, min(5, max_depth)),
+        "max_breadth": max(1, min(500, max_breadth)),
+        "limit": max(1, limit),
+        "extract_depth": extract_depth if extract_depth in valid_depths else "basic",
+        "format": format if format in valid_formats else "markdown",
+        "include_favicon": True,
+    }
 
-    Returns:
-        清理后的纯文本内容
-    """
-    browser = await _get_browser()
-    page: Page = await browser.new_page()
-    try:
-        # 设置合理视口，模拟真实浏览器
-        await page.set_viewport_size({"width": 1280, "height": 800})
-        # 访问页面，等待网络基本空闲
-        await page.goto(url, wait_until="networkidle", timeout=15000)
-        # 额外等待一秒，确保懒加载内容触发
-        await page.wait_for_timeout(1000)
-        
-        html = await page.content()
-    except Exception as e:
-        return f"Error: 网页抓取失败 - {e}"
-    finally:
-        await page.close()
+    if instructions:
+        payload["instructions"] = instructions
+    if include_images:
+        payload["include_images"] = True
+    if timeout is not None:
+        payload["timeout"] = max(10.0, min(150.0, float(timeout)))
 
-    # 使用 readability 提取正文
-    doc = Document(html)
-    summary_html = doc.summary(html_partial=True)
-    soup = BeautifulSoup(summary_html, "html.parser")
-    text = await _tidy_text(soup.get_text())
+    async with httpx.AsyncClient() as client:
+        resp = await client.post(endpoint, json=payload, headers=headers, timeout=180.0)
+        if resp.status_code != 200:
+            raise Exception(f"Tavily Crawl API error: {resp.text} (status {resp.status_code})")
+        data = resp.json()
 
-    if len(text) > max_length:
-        text = text[:max_length] + "..."
-    return text
+    results = []
+    for item in data.get("results", []):
+        results.append({
+            "url": item.get("url", ""),
+            "content": item.get("raw_content", ""),
+            "favicon": item.get("favicon", ""),
+        })
+
+    if not results:
+        return "Error: Tavily Crawl returned no results."
+
+    return json.dumps({
+        "base_url": data.get("base_url", url),
+        "results": results,
+    }, ensure_ascii=False)
+
+
+async def tavily_map(
+    url: str,
+    api_key: str,
+    instructions: str = "",
+    max_depth: int = 1,
+    max_breadth: int = 20,
+    limit: int = 50,
+    timeout: Optional[float] = None,
+) -> str:
+    endpoint = f"{TAVILY_BASE_URL}/map"
+    headers = {
+        "Authorization": f"Bearer {api_key}",
+        "Content-Type": "application/json",
+    }
+
+    payload: Dict[str, Any] = {
+        "url": url,
+        "max_depth": max(1, min(5, max_depth)),
+        "max_breadth": max(1, min(500, max_breadth)),
+        "limit": max(1, limit),
+    }
+
+    if instructions:
+        payload["instructions"] = instructions
+    if timeout is not None:
+        payload["timeout"] = max(10.0, min(150.0, float(timeout)))
+
+    async with httpx.AsyncClient() as client:
+        resp = await client.post(endpoint, json=payload, headers=headers, timeout=180.0)
+        if resp.status_code != 200:
+            raise Exception(f"Tavily Map API error: {resp.text} (status {resp.status_code})")
+        data = resp.json()
+
+    urls = data.get("results", [])
+    if not urls:
+        return "Error: Tavily Map returned no URLs."
+
+    return json.dumps({
+        "base_url": data.get("base_url", url),
+        "urls": urls,
+        "total": len(urls),
+    }, ensure_ascii=False)
+
 
 async def search_tavily_list(
     query: str,
@@ -167,7 +265,6 @@ async def search_tavily_list(
     max_results: int = 7,
     **kwargs
 ) -> List[Dict[str, str]]:
-    """返回 Tavily 搜索结果的列表形式（不包含 JSON 序列化）"""
     result_json = await search_tavily(query, api_key, max_results, **kwargs)
     if result_json.startswith("Error:"):
         return []
