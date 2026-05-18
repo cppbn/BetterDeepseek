@@ -104,9 +104,7 @@ export function useChatStream() {
         break;
       case 'reasoning_content':
         sessionStore.updateLastMessageInSession(streamSessionId, (msg) => {
-          if (msg.type === 'reasoning') {
-            msg.content += event.content;
-          } else {
+          if (msg.type !== 'reasoning') {
             sessionStore.addMessageToSession(streamSessionId, {
               id: _tempIdCounter--,
               seq: 0,
@@ -115,31 +113,69 @@ export function useChatStream() {
               type: 'reasoning',
               content: event.content,
               created_at: new Date().toISOString(),
+              reasoningSteps: [{ type: 'thinking', content: event.content }],
+              isStreaming: true,
             });
+            return;
+          }
+          msg.content += event.content;
+          if (!msg.reasoningSteps) msg.reasoningSteps = [];
+          const lastStep = msg.reasoningSteps.at(-1);
+          if (lastStep && lastStep.type === 'thinking') {
+            lastStep.content += event.content;
+          } else {
+            msg.reasoningSteps.push({ type: 'thinking', content: event.content });
           }
         });
         break;
       case 'tool_call':
-        sessionStore.addMessageToSession(streamSessionId, {
-          id: _tempIdCounter--,
-          seq: 0,
-          idx: turnIdx,
-          role: 'assistant',
-          type: 'tool_call',
-          content: `调用工具: ${event.content.name}`,
-          created_at: new Date().toISOString(),
-          toolCallData: event.content,
+        sessionStore.updateLastMessageInSession(streamSessionId, (msg) => {
+          if (msg.type === 'reasoning') {
+            if (!msg.reasoningSteps) msg.reasoningSteps = [];
+            msg.reasoningSteps.push({
+              type: 'tool_call',
+              content: event.content.name,
+              toolName: event.content.name,
+              toolArgs: event.content.args,
+              toolResult: '',
+              toolResultLoading: true,
+            });
+          } else {
+            sessionStore.addMessageToSession(streamSessionId, {
+              id: _tempIdCounter--,
+              seq: 0,
+              idx: turnIdx,
+              role: 'assistant',
+              type: 'tool_call',
+              content: `调用工具: ${event.content.name}`,
+              created_at: new Date().toISOString(),
+              toolCallData: event.content,
+            });
+          }
         });
         break;
       case 'tool_result':
-        sessionStore.addMessageToSession(streamSessionId, {
-          id: _tempIdCounter--,
-          seq: 0,
-          idx: turnIdx,
-          role: 'tool',
-          type: 'tool_result',
-          content: event.content,
-          created_at: new Date().toISOString(),
+        sessionStore.updateLastMessageInSession(streamSessionId, (msg) => {
+          if (msg.type === 'reasoning' && msg.reasoningSteps) {
+            const steps = msg.reasoningSteps;
+            for (let i = steps.length - 1; i >= 0; i--) {
+              const step = steps[i];
+              if (step && step.type === 'tool_call' && step.toolResultLoading) {
+                step.toolResult = event.content;
+                step.toolResultLoading = false;
+                return;
+              }
+            }
+          }
+          sessionStore.addMessageToSession(streamSessionId, {
+            id: _tempIdCounter--,
+            seq: 0,
+            idx: turnIdx,
+            role: 'tool',
+            type: 'tool_result',
+            content: event.content,
+            created_at: new Date().toISOString(),
+          });
         });
         break;
       case 'file':

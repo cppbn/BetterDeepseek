@@ -1,7 +1,101 @@
 import { defineStore } from 'pinia';
 import { ref, computed } from 'vue';
 import { apiClient } from '@/api/client';
-import { type Session, type Message, type FileInfo } from '@/types';
+import { type Session, type Message, type FileInfo, type ReasoningStep } from '@/types';
+
+function mergeReasoningGroup(group: Message[]): Message {
+  const base = group[0]!;
+  const steps: ReasoningStep[] = [];
+
+  for (const msg of group) {
+    if (msg.type === 'reasoning') {
+      const lastStep = steps.at(-1);
+      if (lastStep && lastStep.type === 'thinking') {
+        lastStep.content += msg.content;
+      } else {
+        steps.push({ type: 'thinking', content: msg.content });
+      }
+    } else if (msg.type === 'tool_call') {
+      let toolName = '';
+      let toolArgs: any = {};
+      try {
+        if (msg.toolCallData) {
+          toolName = msg.toolCallData.name;
+          toolArgs = msg.toolCallData.args;
+        } else {
+          const parsed = JSON.parse(msg.content);
+          toolName = parsed.name || '';
+          toolArgs = parsed.args || {};
+        }
+      } catch {
+        toolName = msg.content;
+      }
+      steps.push({
+        type: 'tool_call',
+        content: toolName,
+        toolName,
+        toolArgs,
+        toolResult: '',
+      });
+    } else if (msg.type === 'tool_result') {
+      for (let j = steps.length - 1; j >= 0; j--) {
+        const step = steps[j];
+        if (step && step.type === 'tool_call' && !step.toolResult) {
+          step.toolResult = msg.content;
+          break;
+        }
+      }
+    }
+  }
+
+  const thinkingContent = steps
+    .filter((s) => s.type === 'thinking')
+    .map((s) => s.content)
+    .join('');
+
+  return {
+    id: base.id,
+    seq: base.seq,
+    idx: base.idx,
+    created_at: base.created_at,
+    type: 'reasoning' as const,
+    role: 'assistant' as const,
+    content: thinkingContent,
+    reasoningSteps: steps,
+    isStreaming: false,
+    attachments_file_id: base.attachments_file_id,
+    attachments: base.attachments,
+  };
+}
+
+function mergeReasoningMessages(messages: Message[]): Message[] {
+  const result: Message[] = [];
+  let i = 0;
+  while (i < messages.length) {
+    const msg = messages[i]!;
+    if (
+      msg.type === 'reasoning' ||
+      msg.type === 'tool_call' ||
+      msg.type === 'tool_result'
+    ) {
+      const groupStart = i;
+      while (
+        i < messages.length &&
+        (messages[i]!.type === 'reasoning' ||
+          messages[i]!.type === 'tool_call' ||
+          messages[i]!.type === 'tool_result')
+      ) {
+        i++;
+      }
+      const group = messages.slice(groupStart, i);
+      result.push(mergeReasoningGroup(group));
+    } else {
+      result.push(msg);
+      i++;
+    }
+  }
+  return result;
+}
 
 export const useSessionStore = defineStore('session', () => {
   const sessions = ref<Session[]>([]);
@@ -33,7 +127,7 @@ export const useSessionStore = defineStore('session', () => {
   ) {
     const msgs = messagesMap.value[sessionId];
     if (msgs && msgs.length > 0) {
-      updater(msgs[msgs.length - 1]);
+      updater(msgs[msgs.length - 1]!);
     }
   }
 
@@ -63,7 +157,7 @@ export const useSessionStore = defineStore('session', () => {
       const { data } = await apiClient.get<Message[]>(
         `/sessions/${sessionId}/messages`
       );
-      messagesMap.value[sessionId] = data;
+      messagesMap.value[sessionId] = mergeReasoningMessages(data);
 
       await Promise.all(
         data
@@ -113,21 +207,7 @@ export const useSessionStore = defineStore('session', () => {
       const { data } = await apiClient.get<Message[]>(
         `/sessions/${sessionId}/messages`
       );
-      const localMsgs = messagesMap.value[sessionId];
-      if (!localMsgs || localMsgs.length === 0) {
-        messagesMap.value[sessionId] = data;
-        return;
-      }
-      const serverBySeq = new Map<number, Message>();
-      for (const m of data) {
-        serverBySeq.set(m.seq, m);
-      }
-      for (const local of localMsgs) {
-        const server = serverBySeq.get(local.seq);
-        if (server && local.id < 0) {
-          local.id = server.id;
-        }
-      }
+      messagesMap.value[sessionId] = mergeReasoningMessages(data);
     } catch {
       // silent — messages are already displayed from streaming
     }

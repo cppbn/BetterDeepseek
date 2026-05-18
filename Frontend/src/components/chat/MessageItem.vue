@@ -6,7 +6,6 @@
     @mouseleave="showActions = false"
     @click="togglePinActions"
   >
-    <!-- Action buttons for user messages (left side of bubble) -->
     <div
       v-if="message.role === 'user' && message.type === 'message' && !message.isStreaming && (showActions || pinnedActions)"
       class="flex items-center gap-0.5 mr-1 self-end mb-1"
@@ -39,32 +38,81 @@
       class="max-w-[85%] rounded-2xl px-5 py-3 shadow-sm"
       :class="{
         'bg-blue-600 text-white': message.role === 'user',
-        'bg-white text-gray-800 border border-gray-100': message.role !== 'user',
-        'italic text-gray-500 text-sm bg-gray-50': message.type === 'reasoning',
-        'bg-yellow-50 border border-yellow-200 text-yellow-800': message.type === 'tool_call',
-        'bg-purple-50 border border-purple-200 text-purple-800': message.type === 'tool_result',
+        'bg-white text-gray-800 border border-gray-100': message.role !== 'user' && message.type !== 'reasoning',
+        'bg-gray-50 border border-gray-100': message.type === 'reasoning',
       }"
     >
-      <!-- 推理消息 -->
       <template v-if="message.type === 'reasoning'">
-        <div class="flex items-center gap-2 cursor-pointer select-none" @click="toggleCollapse">
-          <component :is="collapsed ? ChevronRightIcon : ChevronDownIcon" class="w-4 h-4 text-gray-500" />
-          <LightBulbIcon class="w-4 h-4 text-gray-500" />
-          <span class="text-sm font-medium text-gray-600">推理过程</span>
-          <!-- <span v-if="message.isStreaming" class="text-xs text-gray-400 ml-2 animate-pulse">生成中...</span> -->
+        <div
+          class="flex items-center gap-2 cursor-pointer select-none"
+          :class="{ 'py-1.5 px-3 -mx-5 -my-3': false }"
+          @click="toggleCollapse"
+        >
+          <component :is="collapsed ? ChevronRightIcon : ChevronDownIcon" class="w-3.5 h-3.5 text-gray-400" />
+          <LightBulbIcon class="w-3.5 h-3.5 text-gray-400" />
+          <span class="text-xs font-medium text-gray-500">推理过程</span>
+          <span v-if="collapsed && stepSummary" class="text-xs text-gray-400 ml-1">{{ stepSummary }}</span>
         </div>
-        <div v-if="!collapsed" class="mt-2 whitespace-pre-wrap break-words text-xs text-gray-500 leading-relaxed">
-          {{ message.content }}
-          <!-- <span v-if="message.isStreaming" class="inline-block w-2 h-3 ml-1 bg-gray-400 animate-pulse"></span> -->
+        <div v-if="!collapsed" class="mt-3 space-y-2">
+          <template v-if="message.reasoningSteps?.length">
+            <div
+              v-for="(step, i) in message.reasoningSteps"
+              :key="i"
+              class="text-xs text-gray-500 leading-relaxed"
+              :class="step.type === 'thinking' ? 'whitespace-pre-wrap break-words' : ''"
+            >
+              <template v-if="step.type === 'thinking'">
+                {{ step.content }}
+              </template>
+              <template v-else-if="step.type === 'tool_call'">
+                <div class="bg-yellow-50 border border-yellow-200 rounded-lg px-2.5 py-2">
+                  <div
+                    class="flex items-center gap-1.5 cursor-pointer select-none"
+                    @click="toggleToolCall(i)"
+                  >
+                    <WrenchScrewdriverIcon class="w-3 h-3 text-yellow-600" />
+                    <span class="font-medium text-yellow-700">{{ step.toolName }}</span>
+                    <component
+                      :is="expandedToolCalls.has(i) ? ChevronDownIcon : ChevronRightIcon"
+                      class="w-3 h-3 text-yellow-400 ml-auto"
+                    />
+                  </div>
+                  <div v-if="expandedToolCalls.has(i)" class="mt-1.5 space-y-1.5">
+                    <pre
+                      v-if="step.toolArgs && Object.keys(step.toolArgs).length"
+                      class="text-xs text-yellow-600 overflow-auto bg-yellow-50 rounded p-1.5 border border-yellow-100"
+                    >{{ JSON.stringify(step.toolArgs, null, 2) }}</pre>
+                    <div
+                      v-if="step.toolResult"
+                      class="text-xs text-green-700 bg-green-50 rounded p-1.5 border border-green-100 whitespace-pre-wrap break-words max-h-32 overflow-y-auto"
+                    >{{ step.toolResult }}</div>
+                    <div
+                      v-else-if="step.toolResultLoading"
+                      class="flex items-center gap-1.5 text-xs text-gray-400 py-0.5"
+                    >
+                      <span class="inline-block w-2 h-2 bg-yellow-400 rounded-full animate-pulse"></span>
+                      执行中...
+                    </div>
+                  </div>
+                </div>
+              </template>
+            </div>
+          </template>
+          <div
+            v-else-if="message.content"
+            class="whitespace-pre-wrap break-words text-xs text-gray-500 leading-relaxed"
+          >
+            {{ message.content }}
+          </div>
+          <span v-if="message.isStreaming" class="inline-block w-2 h-3 bg-gray-400 animate-pulse align-middle"></span>
         </div>
       </template>
 
-      <!-- 工具调用消息 -->
       <template v-else-if="message.type === 'tool_call'">
         <div class="flex items-center gap-2 cursor-pointer select-none" @click="toggleCollapse">
-          <component :is="collapsed ? ChevronRightIcon : ChevronDownIcon" class="w-4 h-4" />
-          <WrenchScrewdriverIcon class="w-4 h-4" />
-          <span class="text-sm font-medium">调用工具: {{ message.toolCallData?.name || JSON.parse(message.content).name }}</span>
+          <component :is="collapsed ? ChevronRightIcon : ChevronDownIcon" class="w-3.5 h-3.5" />
+          <WrenchScrewdriverIcon class="w-3.5 h-3.5" />
+          <span class="text-xs font-medium">调用工具: {{ message.toolCallData?.name || JSON.parse(message.content).name }}</span>
         </div>
         <div v-if="!collapsed" class="mt-2">
           <pre class="text-xs overflow-auto">{{
@@ -73,14 +121,13 @@
         </div>
       </template>
 
-      <!-- 工具结果消息 -->
       <template v-else-if="message.type === 'tool_result'">
         <div class="flex items-center gap-2 cursor-pointer select-none" @click="toggleCollapse">
-          <component :is="collapsed ? ChevronRightIcon : ChevronDownIcon" class="w-4 h-4" />
-          <CheckCircleIcon class="w-4 h-4 text-green-600" />
-          <span class="text-sm font-medium">工具结果</span>
+          <component :is="collapsed ? ChevronRightIcon : ChevronDownIcon" class="w-3.5 h-3.5" />
+          <CheckCircleIcon class="w-3.5 h-3.5 text-green-600" />
+          <span class="text-xs font-medium">工具结果</span>
         </div>
-        <div v-if="!collapsed" class="mt-2 text-sm whitespace-pre-wrap break-words">
+        <div v-if="!collapsed" class="mt-2 text-xs whitespace-pre-wrap break-words">
           {{ message.content }}
         </div>
       </template>
@@ -95,7 +142,6 @@
           <span v-if="message.isStreaming" class="inline-block w-2 h-4 ml-1 bg-current animate-pulse"></span>
         </div>
       </template>
-      <!-- 附件列表（助手消息且存在附件 ID） -->
       <div
         v-if="(message.attachments_file_id?.length || message.attachments?.length)"
         class="mt-3 pt-2 border-t border-gray-200"
@@ -125,7 +171,6 @@
       </div>
     </div>
 
-    <!-- Action buttons for assistant messages (right side of bubble) -->
     <div
       v-if="message.role === 'assistant' && message.type === 'message' && !message.isStreaming && (showActions || pinnedActions)"
       class="flex items-center gap-0.5 ml-1 self-end mb-1"
@@ -150,7 +195,7 @@
   </div>
 </template>
 <script setup lang="ts">
-import { ref, reactive, computed, onMounted } from 'vue';
+import { ref, reactive, computed, onMounted, watch } from 'vue';
 import {
   WrenchScrewdriverIcon,
   CheckCircleIcon,
@@ -169,7 +214,11 @@ import MarkdownRenderer from './MarkdownRenderer.vue';
 import { filesApi } from '@/api/files';
 import { useSessionStore } from '@/stores/session';
 
-const props = defineProps<{ message: Message }>();
+const props = defineProps<{
+  message: Message;
+  forceCollapseVersion?: number;
+  forceCollapsed?: boolean;
+}>();
 
 const emit = defineEmits<{
   (e: 'edit', message: Message): void;
@@ -200,30 +249,49 @@ const isLastAssistantMessage = computed(() => {
   );
 });
 
-// 折叠状态（独立于消息对象）
 const collapsed = ref(true);
 
-// 根据消息类型和流式状态决定初始折叠
 function initCollapsed() {
-  // 推理消息：默认展开
   if (props.message.type === 'reasoning') {
     return false;
   }
-  // 工具调用和工具结果：默认折叠
   if (props.message.type === 'tool_call' || props.message.type === 'tool_result') {
     return true;
   }
-  // 其他类型无折叠功能
   return false;
 }
 
-// 初始化折叠状态
 collapsed.value = initCollapsed();
 
+watch(() => props.forceCollapseVersion, () => {
+  if (props.forceCollapsed !== undefined && ['reasoning', 'tool_call', 'tool_result'].includes(props.message.type)) {
+    collapsed.value = props.forceCollapsed;
+  }
+});
+
 function toggleCollapse() {
-  // 仅对可折叠类型生效
   if (['reasoning', 'tool_call', 'tool_result'].includes(props.message.type)) {
     collapsed.value = !collapsed.value;
+  }
+}
+
+const stepSummary = computed(() => {
+  if (!props.message.reasoningSteps?.length) return '';
+  const thinkingCount = props.message.reasoningSteps.filter(s => s.type === 'thinking').length;
+  const toolCount = props.message.reasoningSteps.filter(s => s.type === 'tool_call').length;
+  const parts: string[] = [];
+  if (thinkingCount) parts.push(`${thinkingCount} 步思考`);
+  if (toolCount) parts.push(`${toolCount} 次工具调用`);
+  return `(${parts.join('，')})`;
+});
+
+const expandedToolCalls = reactive(new Set<number>());
+
+function toggleToolCall(index: number) {
+  if (expandedToolCalls.has(index)) {
+    expandedToolCalls.delete(index);
+  } else {
+    expandedToolCalls.add(index);
   }
 }
 

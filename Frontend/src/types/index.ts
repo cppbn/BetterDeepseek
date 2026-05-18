@@ -1,5 +1,3 @@
-import type { list } from "postcss";
-
 export interface User {
   id: number;
   username: string;
@@ -9,6 +7,15 @@ export interface Session {
   session_id: string;
   title?: string;
   created_at: string;
+}
+
+export interface ReasoningStep {
+  type: 'thinking' | 'tool_call';
+  content: string;
+  toolName?: string;
+  toolArgs?: any;
+  toolResult?: string;
+  toolResultLoading?: boolean;
 }
 
 export interface Message {
@@ -23,6 +30,7 @@ export interface Message {
   toolCallData?: any;
   attachments_file_id?: string[];
   attachments?: FileInfo[];
+  reasoningSteps?: ReasoningStep[];
 }
 
 export interface FileInfo {
