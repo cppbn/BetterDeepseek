@@ -85,20 +85,54 @@ class GeminiProvider(LLMProvider):
         tool_calls_buffer: list = []
         usage = None
         self._thought_signature = None
+        end_reason = None
 
-        async for raw_line in response.aiter_lines():
-            if not raw_line.startswith("data: "):
-                continue
-            data_str = raw_line[6:].strip()
-            try:
-                data = json.loads(data_str)
-            except json.JSONDecodeError:
-                continue
+        try:
+            async for raw_line in response.aiter_lines():
+                if not raw_line.startswith("data: "):
+                    continue
+                data_str = raw_line[6:].strip()
+                try:
+                    data = json.loads(data_str)
+                except json.JSONDecodeError:
+                    continue
 
-            candidates = data.get("candidates", [])
-            if candidates:
+                if "error" in data:
+                    err = data["error"]
+                    logger.error(f"Gemini SSE error: {err}")
+                    yield {"type": "done"}
+                    return
+
+                if "promptFeedback" in data:
+                    fb = data["promptFeedback"]
+                    if fb.get("blockReason"):
+                        logger.warning(f"Gemini prompt blocked: {fb['blockReason']}")
+                        yield {"type": "done"}
+                        return
+
+                candidates = data.get("candidates", [])
+                if not candidates:
+                    if "usageMetadata" in data:
+                        um = data["usageMetadata"]
+                        yield {"type": "usage", "data": {
+                            "prompt_tokens": um.get("promptTokenCount", 0),
+                            "completion_tokens": um.get("candidatesTokenCount", 0),
+                            "total_tokens": um.get("totalTokenCount", 0),
+                        }}
+                    continue
+
                 candidate = candidates[0]
-                content = candidate.get("content", {})
+                finish_reason = candidate.get("finishReason")
+
+                if finish_reason in ("SAFETY", "RECITATION", "BLOCKLIST"):
+                    for sr in candidate.get("safetyRatings", []):
+                        if sr.get("blocked"):
+                            logger.warning(f"Gemini blocked category={sr.get('category')}: {sr}")
+                    if finish_reason not in ("STOP", "MAX_TOKENS"):
+                        end_reason = finish_reason
+                        continue
+
+                content = candidate.get("content") or {}
                 parts = content.get("parts", [])
 
                 for part in parts:
@@ -107,14 +141,13 @@ class GeminiProvider(LLMProvider):
 
                     if "thoughtSignature" in part:
                         self._thought_signature = part["thoughtSignature"]
-                        continue
 
                     is_thought = part.get("thought")
                     if is_thought:
-                        if "text" in part:
-                            yield {"type": "reasoning", "data": str(part["text"])}
-                    elif "text" in part:
-                        yield {"type": "content", "data": str(part["text"])}
+                        if "text" in part and part["text"]:
+                            yield {"type": "reasoning", "data": part["text"]}
+                    elif "text" in part and part["text"]:
+                        yield {"type": "content", "data": part["text"]}
 
                     if "functionCall" in part:
                         fc = part["functionCall"]
@@ -130,26 +163,30 @@ class GeminiProvider(LLMProvider):
                             }
                         })
 
-            if "usageMetadata" in data:
-                um = data["usageMetadata"]
-                usage = {
-                    "prompt_tokens": um.get("promptTokenCount", 0),
-                    "completion_tokens": um.get("candidatesTokenCount", 0),
-                    "total_tokens": um.get("totalTokenCount", 0),
-                }
-                yield {"type": "usage", "data": usage}
+                if finish_reason and finish_reason not in ("STOP",):
+                    logger.debug(f"Gemini finish reason: {finish_reason}")
+                    if finish_reason == "MAX_TOKENS":
+                        end_reason = finish_reason
 
-            finish_reason = None
-            if candidates:
-                finish_reason = candidates[0].get("finishReason")
-            if finish_reason and finish_reason != "STOP":
-                logger.debug(f"Gemini finish reason: {finish_reason}")
+                if "usageMetadata" in data:
+                    um = data["usageMetadata"]
+                    yield {"type": "usage", "data": {
+                        "prompt_tokens": um.get("promptTokenCount", 0),
+                        "completion_tokens": um.get("candidatesTokenCount", 0),
+                        "total_tokens": um.get("totalTokenCount", 0),
+                    }}
+
+        except Exception as e:
+            logger.error(f"Gemini parse_stream exception: {e}", exc_info=True)
 
         if self._thought_signature:
             yield {"type": "thought_signature", "data": self._thought_signature}
 
         if tool_calls_buffer:
             yield {"type": "tool_calls_complete", "data": tool_calls_buffer}
+
+        if end_reason and end_reason != "MAX_TOKENS":
+            logger.warning(f"Gemini stream ended with: {end_reason}")
 
         yield {"type": "done"}
 
