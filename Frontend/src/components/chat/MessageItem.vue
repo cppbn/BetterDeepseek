@@ -195,7 +195,7 @@
   </div>
 </template>
 <script setup lang="ts">
-import { ref, reactive, computed, onMounted, watch } from 'vue';
+import { ref, reactive, computed, onMounted } from 'vue';
 import {
   WrenchScrewdriverIcon,
   CheckCircleIcon,
@@ -216,8 +216,6 @@ import { useSessionStore } from '@/stores/session';
 
 const props = defineProps<{
   message: Message;
-  forceCollapseVersion?: number;
-  forceCollapsed?: boolean;
 }>();
 
 const emit = defineEmits<{
@@ -262,12 +260,6 @@ function initCollapsed() {
 }
 
 collapsed.value = initCollapsed();
-
-watch(() => props.forceCollapseVersion, () => {
-  if (props.forceCollapsed !== undefined && ['reasoning', 'tool_call', 'tool_result'].includes(props.message.type)) {
-    collapsed.value = props.forceCollapsed;
-  }
-});
 
 function toggleCollapse() {
   if (['reasoning', 'tool_call', 'tool_result'].includes(props.message.type)) {
