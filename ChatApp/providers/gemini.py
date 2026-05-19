@@ -12,6 +12,7 @@ class GeminiProvider(LLMProvider):
         self.api_key = api_key
         self.base_url = "https://generativelanguage.googleapis.com/v1beta"
         self._model = ""
+        self._thought_signature: Optional[str] = None
 
     def get_api_url(self) -> str:
         return f"{self.base_url}/models/{self._model}:streamGenerateContent?alt=sse"
@@ -51,7 +52,10 @@ class GeminiProvider(LLMProvider):
             if "2.5" in model:
                 generation_config["thinkingConfig"] = {"thinkingBudget": -1}
             else:
-                generation_config["thinkingConfig"] = {"includeThoughts": True}
+                generation_config["thinkingConfig"] = {
+                    "thinkingLevel": "high",
+                    "includeThoughts": True,
+                }
 
         if tools:
             function_declarations: List[Dict[str, Any]] = []
@@ -79,9 +83,8 @@ class GeminiProvider(LLMProvider):
         response: httpx.Response,
     ) -> AsyncGenerator[Dict[str, Any], None]:
         tool_calls_buffer: list = []
-        content_buffer = ""
-        reasoning_buffer = ""
         usage = None
+        self._thought_signature = None
 
         async for line in response.aiter_lines():
             if not line.startswith("data: "):
@@ -99,17 +102,21 @@ class GeminiProvider(LLMProvider):
                 parts = content.get("parts", [])
 
                 for part in parts:
-                    is_thought = part.get("thought", False)
+                    if not isinstance(part, dict):
+                        continue
 
-                    if is_thought and "text" in part:
-                        chunk = part["text"]
-                        reasoning_buffer += chunk
-                        yield {"type": "reasoning", "data": chunk}
+                    if "thoughtSignature" in part:
+                        self._thought_signature = part["thoughtSignature"]
+                        continue
+
+                    is_thought = part.get("thought")
+                    if is_thought is True or (isinstance(is_thought, str) and is_thought.lower() in ("true", "thought")):
+                        if "text" in part:
+                            yield {"type": "reasoning", "data": str(part["text"])}
                     elif "text" in part:
-                        chunk = part["text"]
-                        content_buffer += chunk
-                        yield {"type": "content", "data": chunk}
-                    elif "functionCall" in part:
+                        yield {"type": "content", "data": str(part["text"])}
+
+                    if "functionCall" in part:
                         fc = part["functionCall"]
                         args = fc.get("args", {})
                         if not isinstance(args, dict):
@@ -137,6 +144,9 @@ class GeminiProvider(LLMProvider):
                 finish_reason = candidates[0].get("finishReason")
             if finish_reason and finish_reason != "STOP":
                 logger.debug(f"Gemini finish reason: {finish_reason}")
+
+        if self._thought_signature:
+            yield {"type": "thought_signature", "data": self._thought_signature}
 
         if tool_calls_buffer:
             yield {"type": "tool_calls_complete", "data": tool_calls_buffer}
@@ -233,6 +243,10 @@ def _build_parts(msg: Dict[str, Any], role: str) -> List[Dict[str, Any]]:
                     "args": args,
                 }
             })
+
+        thought_sig = msg.get("thought_signature")
+        if thought_sig:
+            parts.append({"thoughtSignature": thought_sig})
 
     return parts
 

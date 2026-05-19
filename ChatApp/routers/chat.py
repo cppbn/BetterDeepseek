@@ -352,6 +352,7 @@ async def chat_stream(
 
                 reasoning_content = ""
                 content = ""
+                thought_signature: Optional[str] = None
 
                 headers = llm_provider.get_headers()
 
@@ -387,6 +388,8 @@ async def chat_stream(
                                 yield f"data: {json.dumps({'type': 'reasoning_content', 'content': event['data']})}\n\n"
                             elif event["type"] == "tool_calls_complete":
                                 current_tool_calls: list = event["data"]
+                            elif event["type"] == "thought_signature":
+                                thought_signature = event["data"]
                             elif event["type"] == "usage":
                                 usage_data = event["data"]
                                 total_usage["prompt_tokens"] += usage_data.get("prompt_tokens", 0)
@@ -403,6 +406,8 @@ async def chat_stream(
                         "content": content if content else None,
                         "tool_calls": current_tool_calls,
                     }
+                    if thought_signature:
+                        assistant_msg["thought_signature"] = thought_signature
                     messages_for_llm.append(assistant_msg)
                     if reasoning_content:
                         await save_message_db(db, session_id, next_seq, last_msg_idx + 1, "assistant", "reasoning", reasoning_content)
