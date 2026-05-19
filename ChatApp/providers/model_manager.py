@@ -37,6 +37,10 @@ async def load_models_from_db() -> Dict[str, Any]:
 async def refresh_models():
     """Refresh in-memory cache from DB. Called after admin updates."""
     await load_models_from_db()
+    from ChatApp.providers.models import supported_models
+    supported_models.clear()
+    supported_models.update(_cache or {})
+    logger.info("Refreshed supported_models from database")
 
 
 async def get_models() -> Dict[str, Any]:
