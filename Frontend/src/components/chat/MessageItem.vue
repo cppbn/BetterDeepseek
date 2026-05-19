@@ -99,13 +99,13 @@
                       >{{ formatToolArgs(step.toolArgs) }}</div>
                     </template>
                     <template v-if="step.toolResult">
-                      <template v-if="isSearchTool(step.toolName || '') && parsedSearchResults[i]">
-                        <div v-if="parsedSearchResults[i].answer"
+                      <template v-if="step.toolName === 'tavily_search' && parsedToolResults[i]?.type === 'search'">
+                        <div v-if="parsedToolResults[i].data.answer"
                              class="text-xs text-blue-700 bg-blue-50 rounded p-1.5 border border-blue-100">
-                          <span class="font-medium">AI 摘要：</span>{{ parsedSearchResults[i].answer }}
+                          <span class="font-medium">AI 摘要：</span>{{ parsedToolResults[i].data.answer }}
                         </div>
                         <div
-                          v-for="sr in parsedSearchResults[i].results"
+                          v-for="sr in parsedToolResults[i].data.results"
                           :key="sr.index"
                           class="text-xs bg-white rounded border border-gray-100 p-1.5 space-y-0.5"
                         >
@@ -118,6 +118,43 @@
                           <p class="text-gray-500 line-clamp-3">{{ sr.snippet }}</p>
                         </div>
                       </template>
+                      <template v-else-if="(step.toolName === 'tavily_extract' || step.toolName === 'tavily_crawl') && parsedToolResults[i]?.type === 'page'">
+                        <div class="space-y-1">
+                          <div
+                            v-for="(pr, pi) in parsedToolResults[i].data.results"
+                            :key="pi"
+                            class="text-xs bg-white rounded border border-gray-100 p-1.5 space-y-0.5"
+                          >
+                            <a
+                              :href="pr.url"
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              class="font-medium text-blue-600 hover:underline line-clamp-1 block text-xs"
+                            >{{ pr.url }}</a>
+                            <p class="text-gray-500 line-clamp-3">{{ pr.content.slice(0, 250) }}</p>
+                          </div>
+                        </div>
+                      </template>
+                      <template v-else-if="step.toolName === 'tavily_map' && parsedToolResults[i]?.type === 'map'">
+                        <div class="text-xs bg-white rounded border border-gray-100 p-1.5 space-y-1">
+                          <div class="text-gray-500 font-medium truncate text-[11px]">
+                            {{ parsedToolResults[i].data.base_url }}
+                          </div>
+                          <div class="border-t border-gray-100 pt-1 space-y-0.5">
+                            <a
+                              v-for="(url, ui) in parsedToolResults[i].data.urls"
+                              :key="ui"
+                              :href="url"
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              class="text-blue-600 hover:underline line-clamp-1 block text-[11px]"
+                            >• {{ url }}</a>
+                          </div>
+                          <div class="text-gray-400 text-[11px] border-t border-gray-50 pt-0.5">
+                            共 {{ parsedToolResults[i].data.total }} 个链接
+                          </div>
+                        </div>
+                      </template>
                       <template v-else-if="isCodeTool(step.toolName || '')">
                         <div
                           class="text-xs text-gray-600 bg-gray-100 rounded p-1.5 max-h-32 overflow-y-auto font-mono whitespace-pre-wrap leading-relaxed"
@@ -128,6 +165,25 @@
                         class="text-xs text-green-700 bg-green-50 rounded p-1.5 border border-green-100 whitespace-pre-wrap break-words max-h-32 overflow-y-auto"
                       >{{ step.toolResult }}</div>
                     </template>
+                    <div
+                      v-if="step.attachments_file_id?.length"
+                      class="text-xs bg-blue-50 border border-blue-100 rounded p-1.5"
+                    >
+                      <div v-for="fileId in step.attachments_file_id" :key="fileId" class="flex items-center gap-1.5">
+                        <FileIcon class="w-3.5 h-3.5 text-blue-500 flex-shrink-0" />
+                        <span class="flex-1 truncate text-blue-800">{{ getStepFileName(step, fileId) }}</span>
+                        <button
+                          @click.stop="previewFile(fileId)"
+                          class="px-1.5 py-0.5 text-[11px] bg-blue-100 text-blue-600 rounded hover:bg-blue-200"
+                          :disabled="loadingMap[fileId]"
+                        >预览</button>
+                        <button
+                          @click.stop="downloadFile(fileId)"
+                          class="px-1.5 py-0.5 text-[11px] bg-white text-gray-600 rounded border border-gray-200 hover:bg-gray-100"
+                          :disabled="loadingMap[fileId]"
+                        >下载</button>
+                      </div>
+                    </div>
                     <div
                       v-else-if="step.toolResultLoading"
                       class="flex items-center gap-1.5 text-xs text-gray-400 py-1"
@@ -338,13 +394,9 @@ function parseToolResult(raw: string): string {
   return raw;
 }
 
-const SEARCH_TOOLS = new Set(['web_search', 'tavily_search', 'tavily_extract', 'tavily_crawl', 'tavily_map']);
+const SEARCH_TOOLS = new Set(['tavily_search', 'tavily_extract', 'tavily_crawl', 'tavily_map']);
 const CODE_TOOLS = new Set(['exec_python', 'exec_shell']);
 const FILE_TOOLS = new Set(['read_txt', 'read_image', 'read_audio', 'describe_image', 'describe_audio', 'export_file', 'list_files']);
-
-function isSearchTool(name: string): boolean {
-  return SEARCH_TOOLS.has(name);
-}
 
 function isCodeTool(name: string): boolean {
   return CODE_TOOLS.has(name);
@@ -363,41 +415,95 @@ function formatToolArgs(args: Record<string, unknown>): string {
   return lines.join('\n');
 }
 
-interface SearchResultItem {
+interface TavilySearchItem {
   title: string;
   url: string;
   snippet: string;
   index?: string;
 }
 
-interface SearchResultData {
-  results: SearchResultItem[];
+interface TavilySearchData {
+  results: TavilySearchItem[];
   answer?: string;
 }
 
-function parseSearchResult(raw: string): SearchResultData | null {
+interface TavilyPageItem {
+  url: string;
+  content: string;
+}
+
+interface TavilyPageData {
+  results: TavilyPageItem[];
+}
+
+interface TavilyMapData {
+  base_url: string;
+  urls: string[];
+  total: number;
+}
+
+type ParsedToolResult = 
+  | { type: 'search'; data: TavilySearchData }
+  | { type: 'page'; data: TavilyPageData }
+  | { type: 'map'; data: TavilyMapData }
+  | null;
+
+function parseTavilyResult(toolName: string, raw: string): ParsedToolResult {
   try {
     const parsed = JSON.parse(raw);
-    if (parsed && parsed.results && Array.isArray(parsed.results)) {
-      return {
-        results: parsed.results.map((r: any) => ({
-          title: r.title || '',
-          url: r.url || '',
-          snippet: r.snippet || '',
-          index: r.index || '',
-        })),
-        answer: parsed.answer || undefined,
-      };
+
+    if (toolName === 'tavily_search') {
+      if (parsed && parsed.results && Array.isArray(parsed.results)) {
+        return {
+          type: 'search',
+          data: {
+            results: parsed.results.map((r: any) => ({
+              title: r.title || '',
+              url: r.url || '',
+              snippet: r.snippet || r.content || '',
+              index: r.index || '',
+            })),
+            answer: parsed.answer || undefined,
+          },
+        };
+      }
+    }
+
+    if (toolName === 'tavily_extract' || toolName === 'tavily_crawl') {
+      if (parsed && parsed.results && Array.isArray(parsed.results)) {
+        return {
+          type: 'page',
+          data: {
+            results: parsed.results.map((r: any) => ({
+              url: r.url || '',
+              content: r.content || '',
+            })),
+          },
+        };
+      }
+    }
+
+    if (toolName === 'tavily_map') {
+      if (parsed && parsed.urls && Array.isArray(parsed.urls)) {
+        return {
+          type: 'map',
+          data: {
+            base_url: parsed.base_url || '',
+            urls: parsed.urls,
+            total: parsed.total || parsed.urls.length,
+          },
+        };
+      }
     }
   } catch { /* not JSON */ }
   return null;
 }
 
-const parsedSearchResults = computed(() => {
-  const map: Record<number, SearchResultData> = {};
+const parsedToolResults = computed(() => {
+  const map: Record<number, ParsedToolResult> = {};
   props.message.reasoningSteps?.forEach((step, i) => {
-    if (isSearchTool(step.toolName || '') && step.toolResult) {
-      const parsed = parseSearchResult(step.toolResult);
+    if (step.toolName && SEARCH_TOOLS.has(step.toolName) && step.toolResult) {
+      const parsed = parseTavilyResult(step.toolName, step.toolResult);
       if (parsed) map[i] = parsed;
     }
   });
@@ -448,12 +554,16 @@ function getToolSummary(step: ReasoningStep): string {
 
   if (isCodeTool(step.toolName || '')) return '';
 
-  if (isSearchTool(step.toolName || '')) {
-    const parsed = parseSearchResult(step.toolResult);
-    if (parsed?.results?.length) {
-      const parts = [`${parsed.results.length} 条结果`];
-      if (parsed.answer) parts.push('含 AI 摘要');
-      return parts.join('，');
+  if (SEARCH_TOOLS.has(step.toolName || '')) {
+    const parsed = parseTavilyResult(step.toolName || '', step.toolResult);
+    if (parsed) {
+      if (parsed.type === 'search') {
+        const parts = [`${parsed.data.results.length} 条结果`];
+        if (parsed.data.answer) parts.push('含 AI 摘要');
+        return parts.join('，');
+      }
+      if (parsed.type === 'page') return `${parsed.data.results.length} 个页面`;
+      if (parsed.type === 'map') return `${parsed.data.total} 个链接`;
     }
   }
 
@@ -489,6 +599,12 @@ function confirmDelete() {
 
 const fileInfoMap = reactive<Record<string, FileInfo>>({});
 const loadingMap = reactive<Record<string, boolean>>({});
+
+function getStepFileName(step: ReasoningStep, fileId: string): string {
+  const att = step.attachments?.find((a) => a.file_id === fileId);
+  if (att) return att.original_filename;
+  return fileInfoMap[fileId]?.original_filename || fileId;
+}
 
 // 预览文件：在新标签页中打开 blob URL（移动端 iframe 不支持 blob URL）
 async function previewFile(fileId: string) {
@@ -541,5 +657,8 @@ onMounted(() => {
   if (props.message.attachments_file_id) {
     props.message.attachments_file_id.forEach(fetchFileInfo);
   }
+  props.message.reasoningSteps?.forEach((step) => {
+    step.attachments_file_id?.forEach(fetchFileInfo);
+  });
 });
 </script>

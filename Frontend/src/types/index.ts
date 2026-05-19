@@ -16,6 +16,8 @@ export interface ReasoningStep {
   toolArgs?: any;
   toolResult?: string;
   toolResultLoading?: boolean;
+  attachments_file_id?: string[];
+  attachments?: FileInfo[];
 }
 
 export interface Message {

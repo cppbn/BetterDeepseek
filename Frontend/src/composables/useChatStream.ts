@@ -180,20 +180,35 @@ export function useChatStream() {
         break;
       case 'file':
         const fileId = event.content.file_id;
-        const fileMsg: Message = {
-          id: _tempIdCounter--,
-          seq: 0,
-          idx: turnIdx,
-          role: 'tool',
-          type: 'tool_result',
-          content: `文件已导出: ${fileId}`,
-          created_at: new Date().toISOString(),
-          attachments_file_id: [fileId],
-        };
-        filesApi.getFileInfo(streamSessionId, fileId).then(({ data }) => {
-          fileMsg.attachments = [data];
+        sessionStore.updateLastMessageInSession(streamSessionId, (msg) => {
+          if (msg.type === 'reasoning' && msg.reasoningSteps) {
+            const steps = msg.reasoningSteps;
+            for (let i = steps.length - 1; i >= 0; i--) {
+              const step = steps[i];
+              if (step && step.type === 'tool_call' && step.toolResultLoading) {
+                step.attachments_file_id = [fileId];
+                if (!msg.attachments_file_id) msg.attachments_file_id = [];
+                msg.attachments_file_id.push(fileId);
+                break;
+              }
+            }
+          }
         });
-        sessionStore.addMessageToSession(streamSessionId, fileMsg);
+        filesApi.getFileInfo(streamSessionId, fileId).then(({ data: info }) => {
+          sessionStore.updateLastMessageInSession(streamSessionId, (msg) => {
+            if (msg.type === 'reasoning' && msg.reasoningSteps) {
+              for (let i = msg.reasoningSteps.length - 1; i >= 0; i--) {
+                const step = msg.reasoningSteps[i];
+                if (step && step.type === 'tool_call' && step.attachments_file_id?.includes(fileId)) {
+                  step.attachments = [info];
+                  break;
+                }
+              }
+              if (!msg.attachments) msg.attachments = [];
+              msg.attachments.push(info);
+            }
+          });
+        });
         break;
       case 'error':
         sessionStore.updateLastMessageInSession(streamSessionId, (msg) => {

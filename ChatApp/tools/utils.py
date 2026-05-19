@@ -4,7 +4,7 @@ import logging
 logger = logging.getLogger(__name__)
 # 配置压缩阈值（字节数）
 IMAGE_SIZE_THRESHOLD = 2 * 1024 * 1024  # 2MB
-MAX_IMAGE_DIMENSION = 720  # 最大边长（像素）
+MAX_IMAGE_DIMENSION = 1440  # 最大边长（像素）
 JPEG_QUALITY = 75  # JPEG 压缩质量 (1-100)
 
 async def _compress_image_if_needed(image_bytes: bytes, original_format: str) -> tuple[bytes, str]:

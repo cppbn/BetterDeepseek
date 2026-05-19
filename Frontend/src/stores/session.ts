@@ -36,6 +36,8 @@ function mergeReasoningGroup(group: Message[]): Message {
         toolName,
         toolArgs,
         toolResult: '',
+        attachments_file_id: msg.attachments_file_id?.slice(),
+        attachments: msg.attachments?.slice(),
       });
     } else if (msg.type === 'tool_result') {
       let resultContent = msg.content;
@@ -60,6 +62,22 @@ function mergeReasoningGroup(group: Message[]): Message {
     .map((s) => s.content)
     .join('');
 
+  const allFileIds = new Set<string>();
+  for (const msg of group) {
+    msg.attachments_file_id?.forEach((id) => allFileIds.add(id));
+  }
+  for (const step of steps) {
+    step.attachments_file_id?.forEach((id) => allFileIds.add(id));
+  }
+
+  const allAttachments: FileInfo[] = [];
+  for (const msg of group) {
+    msg.attachments?.forEach((a) => allAttachments.push(a));
+  }
+  for (const step of steps) {
+    step.attachments?.forEach((a) => allAttachments.push(a));
+  }
+
   return {
     id: base.id,
     seq: base.seq,
@@ -70,8 +88,8 @@ function mergeReasoningGroup(group: Message[]): Message {
     content: thinkingContent,
     reasoningSteps: steps,
     isStreaming: false,
-    attachments_file_id: base.attachments_file_id,
-    attachments: base.attachments,
+    attachments_file_id: allFileIds.size > 0 ? [...allFileIds] : undefined,
+    attachments: allAttachments.length > 0 ? allAttachments : undefined,
   };
 }
 
@@ -164,8 +182,6 @@ export const useSessionStore = defineStore('session', () => {
       const { data } = await apiClient.get<Message[]>(
         `/sessions/${sessionId}/messages`
       );
-      messagesMap.value[sessionId] = mergeReasoningMessages(data);
-
       await Promise.all(
         data
           .filter(
@@ -181,6 +197,7 @@ export const useSessionStore = defineStore('session', () => {
             message.attachments_file_id = attachments.map((f) => f.file_id);
           })
       );
+      messagesMap.value[sessionId] = mergeReasoningMessages(data);
     } finally {
       isLoadingMessages.value = false;
     }
@@ -213,6 +230,21 @@ export const useSessionStore = defineStore('session', () => {
     try {
       const { data } = await apiClient.get<Message[]>(
         `/sessions/${sessionId}/messages`
+      );
+      await Promise.all(
+        data
+          .filter(
+            (m) =>
+              m.role === 'user' ||
+              (m.role === 'assistant' && m.type === 'tool_call')
+          )
+          .map(async (message) => {
+            const { data: attachments } = await apiClient.get<FileInfo[]>(
+              `/sessions/${sessionId}/messages/${message.id}/attachments`
+            );
+            message.attachments = attachments;
+            message.attachments_file_id = attachments.map((f) => f.file_id);
+          })
       );
       messagesMap.value[sessionId] = mergeReasoningMessages(data);
     } catch {

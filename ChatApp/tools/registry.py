@@ -356,15 +356,17 @@ async def _get_time_tool(timezone: str = "Asia/Shanghai") -> str:
 
 @llm_tool(
     name="read_txt",
-    description="Read a text file from the sandbox. Use this to view the contents of .txt, .md, .py, .json, .csv, .log, .yaml, .cfg, .env and other text-based files. Supports line offset and limit for reading large files in sections.",
+    description="Read a text file from the sandbox. Use this to view .txt, .md, .py, .json, .csv, .log, .yaml, .cfg and other text files. Uses sentence-based navigation — specify a start phrase to jump to that section.",
     parameters=[
         {"name": "file_path", "description": "Path to the text file in the sandbox, e.g. /workspace/output.txt"},
-        {"name": "offset", "description": "Start reading from this line number (1-indexed, default 1)", "type": "integer", "required": False},
-        {"name": "limit", "description": "Maximum number of lines to return (default: all lines)", "type": "integer", "required": False},
-        {"name": "max_chars", "description": "Maximum characters to return (default 5000)", "type": "integer", "required": False},
+        {"name": "start", "description": "Search for this text (case-insensitive substring) in the file, then return from that sentence onward. Empty = from beginning.", "required": False},
+        {"name": "count", "description": "Number of sentences to return. 0 = all sentences from start position. (default 0)", "type": "integer", "required": False},
+        {"name": "max_chars", "description": "Maximum characters to return. 0 = read all, no truncation. (default 0)", "type": "integer", "required": False},
     ]
 )
-async def _read_txt_tool(file_path: str, container_id: str, offset: int = 1, limit: int = 0, max_chars: int = 5000) -> str:
+async def _read_txt_tool(file_path: str, container_id: str, start: str = "", count: int = 0, max_chars: int = 0) -> str:
+    import re
+
     file_path = sandbox.normalize_path(file_path)
     content_bytes = await sandbox.download_file_from_sandbox(container_id, file_path)
     try:
@@ -372,32 +374,41 @@ async def _read_txt_tool(file_path: str, container_id: str, offset: int = 1, lim
     except UnicodeDecodeError:
         text = content_bytes.decode("latin-1")
 
-    lines = text.split('\n')
-    total_lines = len(lines)
     total_chars = len(text)
 
-    start = max(0, offset - 1)
-    if limit and limit > 0:
-        sliced = lines[start:start + limit]
+    sentences = [s for s in re.split(r'(?<=[.!?])\s+|\n|(?<=[。！？])', text) if s]
+    total_sentences = len(sentences)
+
+    if start:
+        start_lower = start.lower()
+        start_idx = None
+        for i, s in enumerate(sentences):
+            if start_lower in s.lower():
+                start_idx = i
+                break
+        if start_idx is None:
+            return f"Error: '{start}' not found in file"
     else:
-        sliced = lines[start:]
+        start_idx = 0
 
-    result = '\n'.join(sliced)
+    if count and count > 0:
+        sliced = sentences[start_idx:start_idx + count]
+    else:
+        sliced = sentences[start_idx:]
 
-    if len(result) > max_chars:
+    result = ''.join(sliced)
+
+    if max_chars and max_chars > 0 and len(result) > max_chars:
         result = result[:max_chars]
-        truncated = True
-    else:
-        truncated = len(result) < total_chars or start > 0
+        end_idx = start_idx + len(sliced) - 1
+        result = f"[sentences {start_idx + 1}-{end_idx + 1} of {total_sentences}, truncated to {max_chars} chars]\n{result}"
+        return result
 
-    if truncated or start > 0:
-        range_info = f"lines {start + 1}"
-        if limit and limit > 0:
-            range_info += f"-{min(start + limit, total_lines)}"
-        else:
-            range_info += f"-{total_lines}"
-        range_info += f" of {total_lines}"
-        result = f"[{range_info}]\n{result}"
+    if start_idx > 0 or (count and count > 0):
+        end_idx = start_idx + len(sliced) - 1
+        result = f"[sentences {start_idx + 1}-{end_idx + 1} of {total_sentences}, {min(len(result), total_chars)} chars]\n{result}"
+    elif max_chars == 0:
+        result = f"[all {total_sentences} sentences, {total_chars} chars]\n{result}"
 
     return result
 
