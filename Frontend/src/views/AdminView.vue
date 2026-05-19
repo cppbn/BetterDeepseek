@@ -377,7 +377,7 @@ async function loadModels() {
 }
 function startNewModel() {
   editingModel.value = {
-    key: '', provider: 'deepseek', model: '', thinking: false,
+    key: '', provider: 'deepseek', model: '', thinking: true,
     accept_image: false, accept_audio: false, is_default: false, category: 'chat', _new: true,
   };
 }

@@ -32,7 +32,7 @@ class ModelConfigIn(BaseModel):
     key: str
     provider: str
     model: str
-    thinking: bool = False
+    thinking: bool = True
     accept_image: bool = False
     accept_audio: bool = False
     is_default: bool = False
