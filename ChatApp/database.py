@@ -101,7 +101,7 @@ async def _init_model_configs(db: aiosqlite.Connection):
             ("gemini-3-flash-thinking", "gemini", "gemini-3-flash", 1, 1, 1, 0, "chat"),
             ("gemini-3.1-flash-lite-thinking", "gemini", "gemini-3.1-flash-lite", 1, 1, 1, 0, "chat"),
             ("image_transcription", "openrouter", "qwen/qwen3.5-flash-02-23", 0, 0, 0, 0, "image"),
-            ("audio_transcription", "openrouter", "xiaomi/mimo-v2.5", 0, 0, 0, 0, "audio"),
+            ("audio_transcription", "gemini", "gemma-4-31b", 0, 0, 0, 0, "audio"),
             ("title_generation", "deepseek", "deepseek-chat", 0, 0, 0, 0, "title"),
         ]
         await db.executemany(

@@ -53,22 +53,38 @@ async def get_models() -> Dict[str, Any]:
 
 async def get_image_model() -> str:
     """Get image transcription model name."""
+    info = await get_image_model_info()
+    return info["model"]
+
+
+async def get_image_model_info() -> dict:
+    """Get image transcription model name and provider."""
     async with aiosqlite.connect(DATABASE_URL) as db:
         cursor = await db.execute(
             "SELECT model, provider FROM model_configs WHERE category = 'image' LIMIT 1"
         )
         row = await cursor.fetchone()
-    return row[0] if row else "qwen/qwen3.5-flash-02-23"
+    if row:
+        return {"model": row[0], "provider": row[1]}
+    return {"model": "qwen/qwen3.5-flash-02-23", "provider": "openrouter"}
 
 
 async def get_audio_model() -> str:
     """Get audio transcription model name."""
+    info = await get_audio_model_info()
+    return info["model"]
+
+
+async def get_audio_model_info() -> dict:
+    """Get audio transcription model name and provider."""
     async with aiosqlite.connect(DATABASE_URL) as db:
         cursor = await db.execute(
             "SELECT model, provider FROM model_configs WHERE category = 'audio' LIMIT 1"
         )
         row = await cursor.fetchone()
-    return row[0] if row else "xiaomi/mimo-v2.5"
+    if row:
+        return {"model": row[0], "provider": row[1]}
+    return {"model": "gemma-4-31b", "provider": "gemini"}
 
 
 async def get_title_model() -> str:
