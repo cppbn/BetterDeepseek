@@ -231,16 +231,19 @@ def _build_parts(msg: Dict[str, Any], role: str) -> List[Dict[str, Any]]:
                 item["text"] for item in response_content
                 if isinstance(item, dict) and item.get("type") == "text"
             ]
-            response_obj = {"result": " ".join(text_parts) if text_parts else "done"}
+            response_obj: Any = " ".join(text_parts) if text_parts else "done"
         elif isinstance(response_content, str):
             try:
                 response_obj = json.loads(response_content)
             except (json.JSONDecodeError, TypeError):
-                response_obj = {"result": response_content}
+                response_obj = response_content
         elif response_content is None:
-            response_obj = {"result": "done"}
+            response_obj = "done"
         else:
             response_obj = response_content
+
+        if not isinstance(response_obj, dict):
+            response_obj = {"result": str(response_obj).strip()}
 
         parts.append({
             "functionResponse": {
