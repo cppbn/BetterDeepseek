@@ -393,10 +393,12 @@ def build_llm_messages(history: List[MessageResponse]) -> list[dict[str, Any]]:
             except (_json.JSONDecodeError, TypeError):
                 tc_id = pending_tool_calls[-1]["id"] if pending_tool_calls else f"tc_{msg.id}"
                 result_content = msg.content
+            tc_name = pending_tool_calls[-1]["function"]["name"] if pending_tool_calls else ""
             _flush()
             messages.append({
                 "role": "tool",
                 "tool_call_id": tc_id,
+                "name": tc_name,
                 "content": result_content,
             })
     _flush()

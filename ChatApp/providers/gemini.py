@@ -49,8 +49,14 @@ class GeminiProvider(LLMProvider):
         generation_config: Dict[str, Any] = {}
 
         if thinking:
+            model_lower = model.lower()
             if "2.5" in model:
                 generation_config["thinkingConfig"] = {"thinkingBudget": -1}
+            elif "lite" in model_lower:
+                generation_config["thinkingConfig"] = {
+                    "thinkingLevel": "low",
+                    "includeThoughts": True,
+                }
             else:
                 generation_config["thinkingConfig"] = {
                     "thinkingLevel": "high",
@@ -95,9 +101,22 @@ class GeminiProvider(LLMProvider):
             except json.JSONDecodeError:
                 continue
 
+            if "error" in data:
+                err = data["error"]
+                err_msg = err.get("message", str(err))
+                logger.error(f"Gemini API stream error: {err_msg}")
+                yield {"type": "done"}
+                return
+
             candidates = data.get("candidates", [])
             if candidates:
                 candidate = candidates[0]
+
+                if candidate.get("safetyRatings"):
+                    for sr in candidate["safetyRatings"]:
+                        if sr.get("blocked"):
+                            logger.warning(f"Gemini blocked: {sr}")
+
                 content = candidate.get("content", {})
                 parts = content.get("parts", [])
 
@@ -188,13 +207,23 @@ def _build_parts(msg: Dict[str, Any], role: str) -> List[Dict[str, Any]]:
     if role == "tool":
         response_name = msg.get("name", "")
         response_content = msg.get("content", "")
-        try:
-            if isinstance(response_content, str):
+
+        if isinstance(response_content, list):
+            text_parts = [
+                item["text"] for item in response_content
+                if isinstance(item, dict) and item.get("type") == "text"
+            ]
+            response_obj = {"result": " ".join(text_parts) if text_parts else "done"}
+        elif isinstance(response_content, str):
+            try:
                 response_obj = json.loads(response_content)
-            else:
-                response_obj = response_content
-        except (json.JSONDecodeError, TypeError):
-            response_obj = {"result": str(response_content)}
+            except (json.JSONDecodeError, TypeError):
+                response_obj = {"result": response_content}
+        elif response_content is None:
+            response_obj = {"result": "done"}
+        else:
+            response_obj = response_content
+
         parts.append({
             "functionResponse": {
                 "name": response_name,
