@@ -8,7 +8,7 @@ from typing import Optional
 from ChatApp import config
 from ChatApp.database import (
     get_db, get_all_model_configs_db, get_model_config_db, upsert_model_config_db,
-    delete_model_config_db, get_all_users_db, delete_user_db,
+    delete_model_config_db, reset_model_configs_db, get_all_users_db, delete_user_db,
     get_token_usage_stats_db, get_token_usage_by_model_db, get_token_usage_by_user_db
 )
 from ChatApp.providers.model_manager import refresh_models
@@ -22,6 +22,7 @@ ALLOWED_KEYS = {
     "DEEPSEEK_API_KEY",
     "TAVILY_API_KEY",
     "OPENROUTER_API_KEY",
+    "GEMINI_API_KEY",
     "SYSTEM_PROMPT_DEFAULT",
     "SYSTEM_PROMPT_WITH_CODE_EXEC",
 }
@@ -121,6 +122,14 @@ async def delete_model(key: str, db: aiosqlite.Connection = Depends(get_db)):
     await refresh_models()
     logger.info(f"Admin deleted model config: {key}")
     return {"message": f"Model '{key}' deleted"}
+
+
+@router.post("/models/reset", dependencies=[Depends(verify_admin_key)])
+async def reset_models(db: aiosqlite.Connection = Depends(get_db)):
+    await reset_model_configs_db(db)
+    await refresh_models()
+    logger.info("Admin reset model configs to defaults")
+    return {"message": "Model configs reset to defaults"}
 
 
 # ===================== Users =====================

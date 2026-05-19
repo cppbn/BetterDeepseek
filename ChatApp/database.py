@@ -94,14 +94,12 @@ async def _init_model_configs(db: aiosqlite.Connection):
     count = (await cursor.fetchone())[0]
     if count == 0:
         defaults = [
-            ("default", "deepseek", "deepseek-reasoner", 1, 0, 0, 1, "chat"),
-            ("deepseek-v4-flash-thinking", "deepseek", "deepseek-v4-flash", 1, 0, 0, 0, "chat"),
+            ("deepseek-v4-flash-thinking", "deepseek", "deepseek-v4-flash", 1, 0, 0, 1, "chat"),
             ("deepseek-v4-pro-thinking", "deepseek", "deepseek-v4-pro", 1, 0, 0, 0, "chat"),
             ("qwen3.6-plus-thinking", "openrouter", "qwen/qwen3.6-plus", 1, 1, 0, 0, "chat"),
-            ("qwen3.5-flash-thinking", "openrouter", "qwen/qwen3.5-flash-02-23", 1, 1, 0, 0, "chat"),
             ("kimi-k2.6-thinking", "openrouter", "moonshotai/kimi-k2.6", 1, 1, 0, 0, "chat"),
-            ("glm-5.1-thinking", "openrouter", "z-ai/glm-5.1", 1, 0, 0, 0, "chat"),
-            ("mino-v2.5-thinking", "openrouter", "xiaomi/mimo-v2.5", 1, 1, 1, 0, "chat"),
+            ("gemini-3-flash-thinking", "gemini", "gemini-3-flash", 1, 1, 1, 0, "chat"),
+            ("gemini-3.1-flash-lite-thinking", "gemini", "gemini-3.1-flash-lite", 1, 1, 1, 0, "chat"),
             ("image_transcription", "openrouter", "qwen/qwen3.5-flash-02-23", 0, 0, 0, 0, "image"),
             ("audio_transcription", "openrouter", "xiaomi/mimo-v2.5", 0, 0, 0, 0, "audio"),
             ("title_generation", "deepseek", "deepseek-chat", 0, 0, 0, 0, "title"),
@@ -175,6 +173,14 @@ async def delete_model_config_db(db: aiosqlite.Connection, key: str) -> bool:
     cursor = await db.execute("DELETE FROM model_configs WHERE key = ?", (key,))
     await db.commit()
     return cursor.rowcount > 0
+
+
+async def reset_model_configs_db(db: aiosqlite.Connection):
+    """Delete all model configs and re-seed defaults."""
+    await db.execute("DELETE FROM model_configs")
+    await db.commit()
+    await _init_model_configs(db)
+    logger.info("Reset model configs to defaults")
 
 
 async def get_model_config_by_category_db(db: aiosqlite.Connection, category: str) -> dict | None:

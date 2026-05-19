@@ -26,11 +26,13 @@ from ChatApp.providers.models import supported_models
 
 from ChatApp.providers.deepseek import DeepSeekProvider
 from ChatApp.providers.openrouter import OpenRouterProvider
+from ChatApp.providers.gemini import GeminiProvider
 from ChatApp.providers.model_manager import get_title_model
 
 PROVIDER_MAP = {
     "deepseek": lambda: DeepSeekProvider(api_key=config.DEEPSEEK_API_KEY),
-    "openrouter": lambda: OpenRouterProvider(api_key=config.OPENROUTER_API_KEY)
+    "openrouter": lambda: OpenRouterProvider(api_key=config.OPENROUTER_API_KEY),
+    "gemini": lambda: GeminiProvider(api_key=config.GEMINI_API_KEY),
 }
 
 logger = logging.getLogger(__name__)
@@ -358,6 +360,7 @@ async def chat_stream(
                     messages=llm_provider.convert_messages_to_provider_format(messages_for_llm),
                     tools=tools_for_llm,
                     thinking=model_info["thinking"],
+                    original_messages=messages_for_llm,
                 )
 
                 while not keepalive_queue.empty():

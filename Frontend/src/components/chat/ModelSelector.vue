@@ -18,14 +18,14 @@
         <div class="p-2">
           <div class="text-xs font-medium text-gray-500 mb-2 px-2">选择模型</div>
           <div
-            v-for="(info, key) in models"
+            v-for="(info, key) in visibleModels"
             :key="key"
             @click="selectModel(key)"
             class="flex items-center justify-between p-2 rounded-md cursor-pointer hover:bg-gray-50 transition-colors"
             :class="{ 'bg-blue-50': selectedModel === key }"
           >
             <div class="flex-1">
-              <div class="font-medium text-sm">{{ formatModelName(key) }}</div>
+              <div class="font-medium text-sm">{{ key }}</div>
               <div class="text-xs text-gray-500 flex items-center gap-2 mt-0.5">
                 <span>{{ info.provider }}</span>
                 <span v-if="info.accept_image" class="flex items-center gap-0.5">
@@ -71,24 +71,15 @@ const selectedModel = computed({
   set: (val) => emit('update:modelValue', val),
 });
 
-const currentModelName = computed(() => {
-  return formatModelName(selectedModel.value);
-});
+const currentModelName = computed(() => selectedModel.value);
 
-function formatModelName(key: string): string {
-  // 将 key 转换为更友好的显示名称
-  const nameMap: Record<string, string> = {
-    'default': 'DeepSeek (默认)',
-    'deepseek-v4-flash-thinking': 'DeepSeek V4 Flash',
-    'deepseek-v4-pro-thinking': 'DeepSeek V4 Pro',
-    'qwen3.6-plus-thinking': 'Qwen 3.6 Plus',
-    'qwen3.5-flash-thinking': 'Qwen 3.5 Flash',
-    'kimi-k2.6-thinking': 'Kimi K2.6',
-    'glm-5.1-thinking': 'GLM 5.1',
-    'mino-v2.5': 'MiMo V2.5',
-  };
-  return nameMap[key] || key;
-}
+const visibleModels = computed(() => {
+  const filtered: ModelsResponse = {};
+  for (const [key, info] of Object.entries(props.models)) {
+    if (key !== 'default') filtered[key] = info;
+  }
+  return filtered;
+});
 
 function selectModel(key: string) {
   selectedModel.value = key;

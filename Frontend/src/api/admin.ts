@@ -84,6 +84,9 @@ export const adminApi = {
   deleteModel(key: string) {
     return apiClient.delete(`/admin/models/${key}`, { headers: adminHeaders() });
   },
+  resetModels() {
+    return apiClient.post('/admin/models/reset', null, { headers: adminHeaders() });
+  },
 
   // Users
   getUsers() {

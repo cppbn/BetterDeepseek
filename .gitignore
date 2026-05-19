@@ -27,3 +27,5 @@ uploads/*
 test.py
 api-docs.md
 TODO.md
+gemini-api-docs.md
+*.zip

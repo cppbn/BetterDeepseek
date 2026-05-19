@@ -101,9 +101,14 @@
       <div v-if="activeTab === 'models'">
         <div class="flex items-center justify-between mb-4">
           <h2 class="text-lg font-semibold">模型配置</h2>
-          <button @click="startNewModel" class="px-4 py-1.5 bg-blue-600 text-white text-sm rounded-lg hover:bg-blue-700">
-            + 添加模型
-          </button>
+          <div class="flex gap-2">
+            <button @click="resetModels" class="px-4 py-1.5 text-sm border rounded-lg hover:bg-gray-50 text-gray-600">
+              重置默认
+            </button>
+            <button @click="startNewModel" class="px-4 py-1.5 bg-blue-600 text-white text-sm rounded-lg hover:bg-blue-700">
+              + 添加模型
+            </button>
+          </div>
         </div>
         <div v-if="modelsLoading" class="text-gray-400">加载中...</div>
         <div v-else>
@@ -135,9 +140,9 @@
                   <input v-model="editingModel.key" class="w-full border rounded px-3 py-1.5 text-sm"
                     :disabled="!editingModel._new" /></div>
                 <div><label class="text-xs text-gray-500">提供商</label>
-                  <select v-model="editingModel.provider" class="w-full border rounded px-3 py-1.5 text-sm">
-                    <option>deepseek</option><option>openrouter</option>
-                  </select></div>
+                   <select v-model="editingModel.provider" class="w-full border rounded px-3 py-1.5 text-sm">
+                     <option>deepseek</option><option>openrouter</option><option>gemini</option>
+                   </select></div>
                 <div><label class="text-xs text-gray-500">模型 ID</label>
                   <input v-model="editingModel.model" class="w-full border rounded px-3 py-1.5 text-sm" /></div>
                 <div><label class="text-xs text-gray-500">分类</label>
@@ -391,6 +396,11 @@ async function removeModel(key: string) {
   if (!confirm(`确定删除模型 "${key}"？`)) return;
   try { await adminApi.deleteModel(key); await loadModels(); }
   catch { alert('删除失败'); }
+}
+async function resetModels() {
+  if (!confirm('确定重置为默认模型配置？当前所有模型配置将被删除。')) return;
+  try { await adminApi.resetModels(); await loadModels(); }
+  catch { alert('重置失败'); }
 }
 
 // ===== 用户 =====
