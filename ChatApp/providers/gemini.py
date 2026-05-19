@@ -296,7 +296,13 @@ def _build_parts(msg: Dict[str, Any], role: str) -> List[Dict[str, Any]]:
 
         thought_sig = msg.get("thought_signature")
         if thought_sig:
-            parts.append({"thoughtSignature": thought_sig})
+            if tool_calls and parts:
+                for part in reversed(parts):
+                    if "functionCall" in part:
+                        part["thoughtSignature"] = thought_sig
+                        break
+            else:
+                parts.append({"thoughtSignature": thought_sig})
 
     return parts
 
