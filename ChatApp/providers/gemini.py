@@ -49,14 +49,8 @@ class GeminiProvider(LLMProvider):
         generation_config: Dict[str, Any] = {}
 
         if thinking:
-            model_lower = model.lower()
             if "2.5" in model:
                 generation_config["thinkingConfig"] = {"thinkingBudget": -1}
-            elif "lite" in model_lower:
-                generation_config["thinkingConfig"] = {
-                    "thinkingLevel": "low",
-                    "includeThoughts": True,
-                }
             else:
                 generation_config["thinkingConfig"] = {
                     "thinkingLevel": "high",
