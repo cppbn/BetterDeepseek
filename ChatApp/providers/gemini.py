@@ -86,31 +86,18 @@ class GeminiProvider(LLMProvider):
         usage = None
         self._thought_signature = None
 
-        async for line in response.aiter_lines():
-            if not line.startswith("data: "):
+        async for raw_line in response.aiter_lines():
+            if not raw_line.startswith("data: "):
                 continue
-            data_str = line[6:].strip()
+            data_str = raw_line[6:].strip()
             try:
                 data = json.loads(data_str)
             except json.JSONDecodeError:
                 continue
 
-            if "error" in data:
-                err = data["error"]
-                err_msg = err.get("message", str(err))
-                logger.error(f"Gemini API stream error: {err_msg}")
-                yield {"type": "done"}
-                return
-
             candidates = data.get("candidates", [])
             if candidates:
                 candidate = candidates[0]
-
-                if candidate.get("safetyRatings"):
-                    for sr in candidate["safetyRatings"]:
-                        if sr.get("blocked"):
-                            logger.warning(f"Gemini blocked: {sr}")
-
                 content = candidate.get("content", {})
                 parts = content.get("parts", [])
 
@@ -123,7 +110,7 @@ class GeminiProvider(LLMProvider):
                         continue
 
                     is_thought = part.get("thought")
-                    if is_thought is True or (isinstance(is_thought, str) and is_thought.lower() in ("true", "thought")):
+                    if is_thought:
                         if "text" in part:
                             yield {"type": "reasoning", "data": str(part["text"])}
                     elif "text" in part:
