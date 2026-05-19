@@ -211,10 +211,12 @@ async def chat_stream(
                     running_sandboxes[session_id] = sandbox_id
 
     if enable_code_exec and sandbox_id:
-        tools_registry["exec_shell"] = global_tools_registry["exec_shell"]
-        tools_for_llm.append(global_tools_for_llm["exec_shell"])
-        tools_registry["exec_python"] = global_tools_registry["exec_python"]
-        tools_for_llm.append(global_tools_for_llm["exec_python"])
+        tools_registry["get_time"] = global_tools_registry["get_time"]
+        tools_for_llm.append(global_tools_for_llm["get_time"])
+        tools_registry["list_files"] = global_tools_registry["list_files"]
+        tools_for_llm.append(global_tools_for_llm["list_files"])
+        tools_registry["read_txt"] = global_tools_registry["read_txt"]
+        tools_for_llm.append(global_tools_for_llm["read_txt"])
         if model_info.get("accept_image"):
             tools_registry["read_image"] = global_tools_registry["read_image"]
             tools_for_llm.append(global_tools_for_llm["read_image"])
@@ -227,8 +229,6 @@ async def chat_stream(
         else:
             tools_registry["describe_audio"] = global_tools_registry["describe_audio"]
             tools_for_llm.append(global_tools_for_llm["describe_audio"])
-        tools_registry["read_txt"] = global_tools_registry["read_txt"]
-        tools_for_llm.append(global_tools_for_llm["read_txt"])
         tools_for_llm.append(
             get_tool_definition(
                 name="export_file",
@@ -236,8 +236,10 @@ async def chat_stream(
                 parameters=[{"name": "path", "description": "the file path"}]
             )
         )
-    tools_registry["get_time"] = global_tools_registry["get_time"]
-    tools_for_llm.append(global_tools_for_llm["get_time"])
+        tools_registry["exec_shell"] = global_tools_registry["exec_shell"]
+        tools_for_llm.append(global_tools_for_llm["exec_shell"])
+        tools_registry["exec_python"] = global_tools_registry["exec_python"]
+        tools_for_llm.append(global_tools_for_llm["exec_python"])
     if enable_search:
         tools_registry["tavily_search"] = global_tools_registry["tavily_search"]
         tools_for_llm.append(global_tools_for_llm["tavily_search"])
@@ -421,7 +423,7 @@ async def chat_stream(
                             logger.info(f"Tool call: {func_name} with args {func_args}")
 
                             # 注入 sandbox 参数
-                            if func_name in ["exec_shell", "exec_python", "describe_image", "describe_audio", "read_image", "read_audio", "read_txt"]:
+                            if func_name in ["exec_shell", "exec_python", "describe_image", "describe_audio", "read_image", "read_audio", "read_txt", "list_files"]:
                                 func_args["container_id"] = sandbox_id
 
                             # 特殊工具 export_file

@@ -65,34 +65,77 @@
                 {{ step.content }}
               </template>
               <template v-else-if="step.type === 'tool_call'">
-                <div class="bg-yellow-50 border border-yellow-200 rounded-lg px-2.5 py-2">
+                <div class="bg-yellow-50 border border-yellow-200 rounded-lg">
                   <div
-                    class="flex items-center gap-1.5 cursor-pointer select-none"
+                    class="flex items-center gap-1.5 cursor-pointer select-none px-2.5 py-2"
                     @click="toggleToolCall(i)"
                   >
-                    <WrenchScrewdriverIcon class="w-3 h-3 text-yellow-600" />
-                    <span class="font-medium text-yellow-700">{{ step.toolName }}</span>
+                    <WrenchScrewdriverIcon class="w-3 h-3 text-yellow-600 flex-shrink-0" />
+                    <span class="font-medium text-xs text-yellow-700 truncate">{{ step.toolName }}</span>
+                    <span
+                      v-if="!expandedToolCalls.has(i) && getToolSummary(step)"
+                      class="text-xs text-yellow-500/70 ml-1 truncate hidden sm:inline"
+                    >{{ getToolSummary(step) }}</span>
                     <component
                       :is="expandedToolCalls.has(i) ? ChevronDownIcon : ChevronRightIcon"
-                      class="w-3 h-3 text-yellow-400 ml-auto"
+                      class="w-3 h-3 text-yellow-400 ml-auto flex-shrink-0"
                     />
                   </div>
-                  <div v-if="expandedToolCalls.has(i)" class="mt-1.5 space-y-1.5">
-                    <pre
-                      v-if="step.toolArgs && Object.keys(step.toolArgs).length"
-                      class="text-xs text-yellow-600 overflow-auto bg-yellow-50 rounded p-1.5 border border-yellow-100"
-                    >{{ JSON.stringify(step.toolArgs, null, 2) }}</pre>
-                    <div
-                      v-if="step.toolResult"
-                      class="text-xs text-green-700 bg-green-50 rounded p-1.5 border border-green-100 whitespace-pre-wrap break-words max-h-32 overflow-y-auto"
-                    >{{ step.toolResult }}</div>
+                  <div v-if="expandedToolCalls.has(i)" class="px-2.5 pb-2 space-y-1.5">
+                    <template v-if="step.toolArgs && Object.keys(step.toolArgs).length">
+                      <template v-if="isCodeTool(step.toolName || '') && step.toolArgs.code">
+                        <pre
+                          class="text-xs bg-gray-900 text-gray-100 rounded p-2 overflow-auto max-h-40 font-mono leading-relaxed"
+                          v-html="highlightCode(String(step.toolArgs.code), codeHighlightLang(step.toolName || ''))"
+                        ></pre>
+                        <div
+                          v-if="otherCodeArgs(step.toolArgs).length"
+                          class="text-xs text-yellow-700 bg-yellow-100/60 rounded p-1.5 font-mono whitespace-pre-wrap leading-relaxed"
+                        >{{ otherCodeArgs(step.toolArgs) }}</div>
+                      </template>
+                      <div
+                        v-else
+                        class="text-xs text-yellow-700 bg-yellow-100/60 rounded p-1.5 font-mono whitespace-pre-wrap leading-relaxed"
+                      >{{ formatToolArgs(step.toolArgs) }}</div>
+                    </template>
+                    <template v-if="step.toolResult">
+                      <template v-if="isSearchTool(step.toolName || '') && parsedSearchResults[i]">
+                        <div v-if="parsedSearchResults[i].answer"
+                             class="text-xs text-blue-700 bg-blue-50 rounded p-1.5 border border-blue-100">
+                          <span class="font-medium">AI 摘要：</span>{{ parsedSearchResults[i].answer }}
+                        </div>
+                        <div
+                          v-for="sr in parsedSearchResults[i].results"
+                          :key="sr.index"
+                          class="text-xs bg-white rounded border border-gray-100 p-1.5 space-y-0.5"
+                        >
+                          <a
+                            :href="sr.url"
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            class="font-medium text-blue-600 hover:underline line-clamp-1 block"
+                          >{{ sr.title }}</a>
+                          <p class="text-gray-500 line-clamp-3">{{ sr.snippet }}</p>
+                        </div>
+                      </template>
+                      <template v-else-if="isCodeTool(step.toolName || '')">
+                        <div
+                          class="text-xs text-gray-600 bg-gray-100 rounded p-1.5 max-h-32 overflow-y-auto font-mono whitespace-pre-wrap leading-relaxed"
+                        >{{ step.toolResult }}</div>
+                      </template>
+                      <div
+                        v-else
+                        class="text-xs text-green-700 bg-green-50 rounded p-1.5 border border-green-100 whitespace-pre-wrap break-words max-h-32 overflow-y-auto"
+                      >{{ step.toolResult }}</div>
+                    </template>
                     <div
                       v-else-if="step.toolResultLoading"
-                      class="flex items-center gap-1.5 text-xs text-gray-400 py-0.5"
+                      class="flex items-center gap-1.5 text-xs text-gray-400 py-1"
                     >
                       <span class="inline-block w-2 h-2 bg-yellow-400 rounded-full animate-pulse"></span>
                       执行中...
                     </div>
+                    <div v-else class="text-xs text-gray-400 py-1">无输出</div>
                   </div>
                 </div>
               </template>
@@ -104,7 +147,6 @@
           >
             {{ message.content }}
           </div>
-          <span v-if="message.isStreaming" class="inline-block w-2 h-3 bg-gray-400 animate-pulse align-middle"></span>
         </div>
       </template>
 
@@ -128,18 +170,16 @@
           <span class="text-xs font-medium">工具结果</span>
         </div>
         <div v-if="!collapsed" class="mt-2 text-xs whitespace-pre-wrap break-words">
-          {{ message.content }}
+          {{ parseToolResult(message.content) }}
         </div>
       </template>
 
       <template v-else>
         <div v-if="message.role === 'assistant' && message.type === 'message'" class="break-words">
           <MarkdownRenderer :content="message.content"></MarkdownRenderer>
-          <span v-if="message.isStreaming" class="inline-block w-2 h-4 ml-1 bg-current animate-pulse align-middle"></span>
         </div>
         <div v-else class="whitespace-pre-wrap break-words">
           {{ message.content }}
-          <span v-if="message.isStreaming" class="inline-block w-2 h-4 ml-1 bg-current animate-pulse"></span>
         </div>
       </template>
       <div
@@ -209,10 +249,11 @@ import {
   TrashIcon,
   ArrowPathIcon,
 } from '@heroicons/vue/24/outline';
-import type { Message, FileInfo } from '@/types';
+import type { Message, FileInfo, ReasoningStep } from '@/types';
 import MarkdownRenderer from './MarkdownRenderer.vue';
 import { filesApi } from '@/api/files';
 import { useSessionStore } from '@/stores/session';
+import hljs from 'highlight.js';
 
 const props = defineProps<{
   message: Message;
@@ -285,6 +326,139 @@ function toggleToolCall(index: number) {
   } else {
     expandedToolCalls.add(index);
   }
+}
+
+function parseToolResult(raw: string): string {
+  try {
+    const parsed = JSON.parse(raw);
+    if (parsed && typeof parsed === 'object' && typeof parsed.content === 'string') {
+      return parsed.content;
+    }
+  } catch { /* not JSON */ }
+  return raw;
+}
+
+const SEARCH_TOOLS = new Set(['web_search', 'tavily_search', 'tavily_extract', 'tavily_crawl', 'tavily_map']);
+const CODE_TOOLS = new Set(['exec_python', 'exec_shell']);
+const FILE_TOOLS = new Set(['read_txt', 'read_image', 'read_audio', 'describe_image', 'describe_audio', 'export_file', 'list_files']);
+
+function isSearchTool(name: string): boolean {
+  return SEARCH_TOOLS.has(name);
+}
+
+function isCodeTool(name: string): boolean {
+  return CODE_TOOLS.has(name);
+}
+
+function formatToolArgs(args: Record<string, unknown>): string {
+  const lines: string[] = [];
+  for (const [key, value] of Object.entries(args)) {
+    if (value === undefined || value === null || value === '') continue;
+    if (typeof value === 'string') {
+      lines.push(`${key} = ${value}`);
+    } else {
+      lines.push(`${key} = ${JSON.stringify(value)}`);
+    }
+  }
+  return lines.join('\n');
+}
+
+interface SearchResultItem {
+  title: string;
+  url: string;
+  snippet: string;
+  index?: string;
+}
+
+interface SearchResultData {
+  results: SearchResultItem[];
+  answer?: string;
+}
+
+function parseSearchResult(raw: string): SearchResultData | null {
+  try {
+    const parsed = JSON.parse(raw);
+    if (parsed && parsed.results && Array.isArray(parsed.results)) {
+      return {
+        results: parsed.results.map((r: any) => ({
+          title: r.title || '',
+          url: r.url || '',
+          snippet: r.snippet || '',
+          index: r.index || '',
+        })),
+        answer: parsed.answer || undefined,
+      };
+    }
+  } catch { /* not JSON */ }
+  return null;
+}
+
+const parsedSearchResults = computed(() => {
+  const map: Record<number, SearchResultData> = {};
+  props.message.reasoningSteps?.forEach((step, i) => {
+    if (isSearchTool(step.toolName || '') && step.toolResult) {
+      const parsed = parseSearchResult(step.toolResult);
+      if (parsed) map[i] = parsed;
+    }
+  });
+  return map;
+});
+
+function highlightCode(code: string, lang?: string): string {
+  try {
+    if (lang && hljs.getLanguage(lang)) {
+      return hljs.highlight(code, { language: lang }).value;
+    }
+    return hljs.highlightAuto(code).value;
+  } catch {
+    return code.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  }
+}
+
+function codeHighlightLang(toolName: string): string {
+  if (toolName === 'exec_python') return 'python';
+  if (toolName === 'exec_shell') return 'bash';
+  return 'plaintext';
+}
+
+function otherCodeArgs(args: Record<string, unknown>): string {
+  const lines: string[] = [];
+  for (const [key, value] of Object.entries(args)) {
+    if (key === 'code' || value === undefined || value === null || value === '') continue;
+    lines.push(`${key} = ${typeof value === 'string' ? value : JSON.stringify(value)}`);
+  }
+  return lines.join('\n');
+}
+
+function getToolSummary(step: ReasoningStep): string {
+  if (step.toolResultLoading) return '执行中...';
+  if (!step.toolResult) return '';
+
+  if (FILE_TOOLS.has(step.toolName || '')) {
+    if (step.toolName === 'list_files' && step.toolResult) {
+      const lines = step.toolResult.split('\n').filter(l => l.trim());
+      if (lines.length) return `${lines.length} 个文件`;
+      return '';
+    }
+    const args = step.toolArgs as Record<string, unknown> | undefined;
+    if (args?.file_path) return String(args.file_path);
+    if (args?.path) return String(args.path);
+    return '';
+  }
+
+  if (isCodeTool(step.toolName || '')) return '';
+
+  if (isSearchTool(step.toolName || '')) {
+    const parsed = parseSearchResult(step.toolResult);
+    if (parsed?.results?.length) {
+      const parts = [`${parsed.results.length} 条结果`];
+      if (parsed.answer) parts.push('含 AI 摘要');
+      return parts.join('，');
+    }
+  }
+
+  const preview = step.toolResult.slice(0, 40);
+  return preview.length < step.toolResult.length ? `${preview}...` : preview;
 }
 
 async function copyContent() {

@@ -80,6 +80,18 @@ async def _exec_shell_tool(container_id: str, cmd: str, timeout: int = 30) -> st
 
 
 @llm_tool(
+    name="list_files",
+    description="List all files in the workspace directory with metadata (file size, line/character counts for text files, resolution for images). Use this to see what files exist before reading them.",
+    parameters=[
+        {"name": "path", "description": "Optional subdirectory path relative to workspace (e.g. 'subdir'). Default: root workspace.", "required": False},
+    ]
+)
+async def _list_files_tool(container_id: str, path: str = "") -> str:
+    logger.info(f"Listing files in sandbox {container_id}, path={path or '/'}")
+    return await sandbox.list_files(container_id)
+
+
+@llm_tool(
     name="tavily_search",
     description="Search the web for real-time information using Tavily API. Returns titles, URLs, snippets, and optionally an AI-generated answer and full page content.",
     parameters=[
@@ -344,22 +356,50 @@ async def _get_time_tool(timezone: str = "Asia/Shanghai") -> str:
 
 @llm_tool(
     name="read_txt",
-    description="Read a text file from the sandbox. Use this to view the contents of .txt, .md, .py, .json, .csv, .log, .yaml, .cfg, .env and other text-based files.",
+    description="Read a text file from the sandbox. Use this to view the contents of .txt, .md, .py, .json, .csv, .log, .yaml, .cfg, .env and other text-based files. Supports line offset and limit for reading large files in sections.",
     parameters=[
         {"name": "file_path", "description": "Path to the text file in the sandbox, e.g. /workspace/output.txt"},
-        {"name": "max_chars", "description": "Maximum characters to return (default 5000)", "type": "integer", "required": False}
+        {"name": "offset", "description": "Start reading from this line number (1-indexed, default 1)", "type": "integer", "required": False},
+        {"name": "limit", "description": "Maximum number of lines to return (default: all lines)", "type": "integer", "required": False},
+        {"name": "max_chars", "description": "Maximum characters to return (default 5000)", "type": "integer", "required": False},
     ]
 )
-async def _read_txt_tool(file_path: str, container_id: str, max_chars: int = 5000) -> str:
+async def _read_txt_tool(file_path: str, container_id: str, offset: int = 1, limit: int = 0, max_chars: int = 5000) -> str:
     file_path = sandbox.normalize_path(file_path)
     content_bytes = await sandbox.download_file_from_sandbox(container_id, file_path)
     try:
         text = content_bytes.decode("utf-8")
     except UnicodeDecodeError:
         text = content_bytes.decode("latin-1")
-    if len(text) > max_chars:
-        text = text[:max_chars] + f"\n\n[... truncated, {len(text) - max_chars} more characters]"
-    return text
+
+    lines = text.split('\n')
+    total_lines = len(lines)
+    total_chars = len(text)
+
+    start = max(0, offset - 1)
+    if limit and limit > 0:
+        sliced = lines[start:start + limit]
+    else:
+        sliced = lines[start:]
+
+    result = '\n'.join(sliced)
+
+    if len(result) > max_chars:
+        result = result[:max_chars]
+        truncated = True
+    else:
+        truncated = len(result) < total_chars or start > 0
+
+    if truncated or start > 0:
+        range_info = f"lines {start + 1}"
+        if limit and limit > 0:
+            range_info += f"-{min(start + limit, total_lines)}"
+        else:
+            range_info += f"-{total_lines}"
+        range_info += f" of {total_lines}"
+        result = f"[{range_info}]\n{result}"
+
+    return result
 
 @llm_tool(
     name="read_audio",

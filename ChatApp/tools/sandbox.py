@@ -1,7 +1,8 @@
 import httpx
 import logging
+import json
 import shlex
-from typing import Tuple, Optional
+from typing import Tuple, Optional, List, Dict, Any
 from urllib.parse import unquote
 
 from ChatApp.config import SANDBOX_SERVICE_URL
@@ -182,3 +183,48 @@ async def download_file_with_meta(
 
         mime_type = headers.get("X-Mime-Type", "application/octet-stream")
         return content, filename, mime_type
+
+
+async def list_files(container_id: str) -> str:
+    """列出沙箱工作目录中的所有文件及其元数据"""
+    try:
+        resp = await _sandbox_request("GET", f"/containers/{container_id}/files", timeout=30.0)
+        data = resp.json()
+        files = data.get("data", [])
+        if not files:
+            return "(empty workspace)"
+
+        lines = []
+        for f in files:
+            name = f.get("name", "")
+            ftype = f.get("type", "binary")
+            size = f.get("size", 0)
+            modified = f.get("modified", "")
+
+            if size >= 1024 * 1024:
+                size_str = f"{size / (1024 * 1024):.1f}MB"
+            elif size >= 1024:
+                size_str = f"{size / 1024:.1f}KB"
+            else:
+                size_str = f"{size}B"
+
+            meta_parts = [size_str]
+            if ftype == "text":
+                chars = f.get("chars", 0)
+                lines_count = f.get("lines", 0)
+                if chars:
+                    meta_parts.append(f"{chars} 字符")
+                if lines_count:
+                    meta_parts.append(f"{lines_count} 行")
+            elif ftype == "image":
+                w = f.get("width")
+                h = f.get("height")
+                if w and h:
+                    meta_parts.append(f"{w}×{h}")
+            meta = ", ".join(meta_parts)
+            lines.append(f"{name}  [{meta}]")
+
+        return "\n".join(lines)
+    except Exception as e:
+        logger.error(f"Failed to list files: {e}")
+        return f"Error listing files: {e}"

@@ -38,10 +38,17 @@ function mergeReasoningGroup(group: Message[]): Message {
         toolResult: '',
       });
     } else if (msg.type === 'tool_result') {
+      let resultContent = msg.content;
+      try {
+        const parsed = JSON.parse(msg.content);
+        if (parsed && typeof parsed === 'object' && typeof parsed.content === 'string') {
+          resultContent = parsed.content;
+        }
+      } catch { /* not JSON wrapper, use as-is */ }
       for (let j = steps.length - 1; j >= 0; j--) {
         const step = steps[j];
         if (step && step.type === 'tool_call' && !step.toolResult) {
-          step.toolResult = msg.content;
+          step.toolResult = resultContent;
           break;
         }
       }
