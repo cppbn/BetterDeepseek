@@ -84,7 +84,7 @@ async def get_audio_model_info() -> dict:
         row = await cursor.fetchone()
     if row:
         return {"model": row[0], "provider": row[1]}
-    return {"model": "gemma-4-31b", "provider": "gemini"}
+    return {"model": "gemini-3.1-flash-lite", "provider": "gemini"}
 
 
 async def get_title_model() -> str:

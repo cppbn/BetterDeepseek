@@ -191,7 +191,6 @@
                       <span class="inline-block w-2 h-2 bg-yellow-400 rounded-full animate-pulse"></span>
                       执行中...
                     </div>
-                    <div v-else class="text-xs text-gray-400 py-1">无输出</div>
                   </div>
                 </div>
               </template>

@@ -29,6 +29,8 @@ from ChatApp.providers.openrouter import OpenRouterProvider
 from ChatApp.providers.gemini import GeminiProvider
 from ChatApp.providers.model_manager import get_title_model
 
+from ChatApp.providers.llm_provider import LLMProvider
+
 PROVIDER_MAP = {
     "deepseek": lambda: DeepSeekProvider(api_key=config.DEEPSEEK_API_KEY),
     "openrouter": lambda: OpenRouterProvider(api_key=config.OPENROUTER_API_KEY),
@@ -42,84 +44,181 @@ router = APIRouter(prefix="/api/sessions/{session_id}/chat", tags=["chat"])
 TITLE_MAX_LENGTH = 40
 
 
-async def _enrich_history_multimodal(
-    messages_for_llm: list[dict[str, Any]],
-    history: list,
-    db: aiosqlite.Connection,
-    session_id: str,
+async def _build_attachment_content_parts(
+    attachments: list[dict],
     model_info: dict,
-) -> list[dict[str, Any]]:
-    """将历史用户消息中附带的图片/音频编码为多模态 content 数组。
-    
-    build_llm_messages 只从 DB 读取纯文本 content，未包含附件。
-    sandbox 不可用时，需要把附件数据注入到 LLM 上下文中。
+) -> list[dict]:
+    """将附件中模型支持的图片/音频编码为多模态 content parts 列表。
+
+    不处理文本类附件（文本直接拼入消息字符串即可）。
+    返回空列表表示没有需要多模态编码的附件。
     """
     accept_img = model_info.get("accept_image")
     accept_aud = model_info.get("accept_audio")
+    parts: list[dict] = []
 
-    # 为所有历史用户消息预加载附件，做成 {msg_id: [attachments]} 映射
-    attachment_map: dict[int, list[dict]] = {}
-    for msg in history:
-        if msg.type == "message" and msg.role == "user":
-            atts = await get_message_attachments_db(db, session_id, msg.id)
-            if atts:
-                attachment_map[msg.id] = atts
+    for att in attachments:
+        mime = att["mime_type"]
+        if accept_img and mime.startswith("image/"):
+            async with aiofiles.open(att["file_path"], mode="rb") as f:
+                img_bytes = await f.read()
+            fmt = mime.split("/")[-1]
+            compressed, final_fmt = await _compress_image_if_needed(img_bytes, fmt)
+            final_mime = f"image/{final_fmt}"
+            b64 = base64.b64encode(compressed).decode("utf-8")
+            parts.append(LLMProvider.build_image_content(final_mime, b64))
+        elif accept_aud and mime.startswith("audio/"):
+            async with aiofiles.open(att["file_path"], mode="rb") as f:
+                aud_bytes = await f.read()
+            aud_b64 = base64.b64encode(aud_bytes).decode("utf-8")
+            audio_format = mime.split("/")[-1]
+            fmt_map = {"mpeg": "mp3", "mp4": "m4a"}
+            audio_format = fmt_map.get(audio_format, audio_format)
+            parts.append(LLMProvider.build_audio_content(aud_b64, audio_format))
 
+    return parts
+
+
+async def _enrich_history_multimodal(
+    messages_for_llm: list[dict[str, Any]],
+    history: list,
+    attachment_map: dict[int, list[dict]],
+    model_info: dict,
+) -> list[dict[str, Any]]:
+    """将历史用户消息中附带的图片/音频编码为多模态 content 数组。
+
+    build_llm_messages 只从 DB 读取纯文本 content，未包含附件。
+    sandbox 不可用时，需要把附件数据注入到 LLM 上下文中。
+
+    attachment_map 由调用方预构建，{msg_id: [attachments]}。
+    """
     if not attachment_map:
         return messages_for_llm
 
-    # 遍历 LLM 消息列表，找到对应的历史用户消息并富化
     result: list[dict[str, Any]] = []
-    hist_user_idx = 0  # 历史中 user message 的序号
+    hist_user_idx = 0
     for llm_msg in messages_for_llm:
-        if llm_msg.get("role") == "user":
-            # 找到对应的历史记录（跳过非 user message 类型）
-            while hist_user_idx < len(history):
-                hmsg = history[hist_user_idx]
-                hist_user_idx += 1
-                if hmsg.type == "message" and hmsg.role == "user":
-                    break
-            else:
-                result.append(llm_msg)
-                continue
+        if llm_msg.get("role") != "user":
+            result.append(llm_msg)
+            continue
 
-            atts = attachment_map.get(hmsg.id)
-            if not atts:
-                result.append(llm_msg)
-                continue
+        while hist_user_idx < len(history):
+            hmsg = history[hist_user_idx]
+            hist_user_idx += 1
+            if hmsg.type == "message" and hmsg.role == "user":
+                break
+        else:
+            result.append(llm_msg)
+            continue
 
-            # 构建多模态内容
-            content_parts = [{"type": "text", "text": llm_msg["content"]}]
-            has_multimodal = False
-            for att in atts:
-                mime = att["mime_type"]
-                if accept_img and mime.startswith("image/"):
-                    async with aiofiles.open(att["file_path"], mode="rb") as f:
-                        img_bytes = await f.read()
-                    fmt = mime.split("/")[-1]
-                    compressed, final_fmt = await _compress_image_if_needed(img_bytes, fmt)
-                    final_mime = f"image/{final_fmt}"
-                    b64 = base64.b64encode(compressed).decode("utf-8")
-                    content_parts.append({"type": "image_url", "image_url": {"url": f"data:{final_mime};base64,{b64}"}})
-                    has_multimodal = True
-                elif accept_aud and mime.startswith("audio/"):
-                    async with aiofiles.open(att["file_path"], mode="rb") as f:
-                        aud_bytes = await f.read()
-                    aud_b64 = base64.b64encode(aud_bytes).decode("utf-8")
-                    audio_format = mime.split("/")[-1]
-                    fmt_map = {"mpeg": "mp3", "mp4": "m4a"}
-                    audio_format = fmt_map.get(audio_format, audio_format)
-                    content_parts.append({"type": "input_audio", "input_audio": {"data": aud_b64, "format": audio_format}})
-                    has_multimodal = True
+        atts = attachment_map.get(hmsg.id)
+        if not atts:
+            result.append(llm_msg)
+            continue
 
-            if has_multimodal:
-                result.append({"role": "user", "content": content_parts})
-            else:
-                result.append(llm_msg)
+        parts = await _build_attachment_content_parts(atts, model_info)
+        if parts:
+            content_parts = [{"type": "text", "text": llm_msg["content"]}] + parts
+            result.append({"role": "user", "content": content_parts})
         else:
             result.append(llm_msg)
 
     return result
+
+
+async def _restore_attachment_context(
+    messages_for_llm: list[dict[str, Any]],
+    history: list,
+    attachment_map: dict[int, list[dict]],
+    enable_code_exec: bool,
+) -> list[dict[str, Any]]:
+    """还原历史用户消息中的附件上下文。
+
+    DB 不再存储 [filename] 标记及文本内容，此函数从附件表还原，
+    保证 messages_for_llm 与旧行为一致。
+    """
+    if not attachment_map:
+        return messages_for_llm
+
+    result: list[dict[str, Any]] = []
+    hist_user_idx = 0
+    for llm_msg in messages_for_llm:
+        if llm_msg.get("role") != "user":
+            result.append(llm_msg)
+            continue
+
+        while hist_user_idx < len(history):
+            hmsg = history[hist_user_idx]
+            hist_user_idx += 1
+            if hmsg.type == "message" and hmsg.role == "user":
+                break
+        else:
+            result.append(llm_msg)
+            continue
+
+        atts = attachment_map.get(hmsg.id)
+        if not atts:
+            result.append(llm_msg)
+            continue
+
+        content = llm_msg["content"]
+        for att in atts:
+            if enable_code_exec:
+                content += f"\n[{att['original_filename']}]"
+            elif att["mime_type"].startswith("text/"):
+                async with aiofiles.open(att["file_path"], encoding="utf-8") as f:
+                    text_content = await f.read(100000)
+                content += f"\n[{att['original_filename']}]\n{text_content}"
+                if len(text_content) >= 100000:
+                    content += "\n[file truncated at 100KB]"
+
+        result.append({"role": "user", "content": content})
+
+    return result
+
+
+async def build_messages_for_llm(
+    history: list,
+    history_attachments: dict[int, list[dict]],
+    current_attachments: list[dict],
+    final_message: str,
+    model_info: dict,
+    enable_code_exec: bool,
+) -> list[dict[str, Any]]:
+    """一次性构建完整的 LLM 消息列表。
+
+    Args:
+        history: 从 DB 读取的原始 MessageResponse 列表
+        history_attachments: 预构建的历史附件映射 {msg_id: [attachments]}
+        current_attachments: 当前消息的附件列表
+        final_message: 处理后的用户消息文本（含 [filename] 标记）
+        model_info: 模型能力字典 (accept_image, accept_audio 等)
+        enable_code_exec: sandbox 代码执行是否可用
+    """
+    messages_for_llm = build_llm_messages(history)
+
+    messages_for_llm = await _restore_attachment_context(
+        messages_for_llm, history, history_attachments, enable_code_exec
+    )
+
+    if not enable_code_exec and (model_info.get("accept_image") or model_info.get("accept_audio")):
+        messages_for_llm = await _enrich_history_multimodal(
+            messages_for_llm, history, history_attachments, model_info
+        )
+
+    system_prompt = config.SYSTEM_PROMPT_WITH_CODE_EXEC if enable_code_exec else config.SYSTEM_PROMPT_DEFAULT
+    messages_for_llm.insert(0, {"role": "system", "content": system_prompt})
+
+    if not enable_code_exec and (model_info.get("accept_image") or model_info.get("accept_audio")):
+        parts = await _build_attachment_content_parts(current_attachments, model_info)
+        if parts:
+            messages_for_llm.append({"role": "user", "content": [{"type": "text", "text": final_message}] + parts})
+        else:
+            messages_for_llm.append({"role": "user", "content": final_message})
+    else:
+        messages_for_llm.append({"role": "user", "content": final_message})
+
+    return messages_for_llm
 
 
 async def generate_session_title(session_id: str, user_msg: str, assistant_reply: str) -> str | None:
@@ -173,10 +272,19 @@ async def chat_stream(
     model_info = supported_models.get(request.model or "default") or supported_models["default"]
     llm_provider = PROVIDER_MAP[model_info["provider"]]()
 
-    # 获取历史消息，重建完整多轮上下文（含 reasoning、tool_calls、tool_result）
+    # 获取历史消息
     history = await get_messages_db(db, session_id, current_user["id"])
-    messages_for_llm: list[dict[str, Any]] = build_llm_messages(history)
-    
+    last_msg_idx = history[-1].idx if history else -1
+    next_seq = history[-1].seq + 1 if history else 0
+
+    # 构建历史附件映射 {msg_id: [attachments]}
+    history_attachments: dict[int, list[dict]] = {}
+    for msg in history:
+        if msg.type == "message" and msg.role == "user":
+            atts = await get_message_attachments_db(db, session_id, msg.id)
+            if atts:
+                history_attachments[msg.id] = atts
+
     # 配置 LLM
     enable_search = request.enable_search
     enable_code_exec = request.enable_code_exec
@@ -186,12 +294,6 @@ async def chat_stream(
     if not await check_availability():
         logger.warning("Sandbox Unavailable")
         enable_code_exec = False
-
-    # 历史消息多模态富化：sandbox 不可用且模型支持图像/音频时，将历史附件注入上下文
-    if not enable_code_exec and (model_info.get("accept_image") or model_info.get("accept_audio")):
-        messages_for_llm = await _enrich_history_multimodal(
-            messages_for_llm, history, db, session_id, model_info
-        )
 
     # 准备工具
     tools_registry: Dict[str, Any] = {}
@@ -252,80 +354,46 @@ async def chat_stream(
         tools_registry["tavily_map"] = global_tools_registry["tavily_map"]
         tools_for_llm.append(global_tools_for_llm["tavily_map"])
 
-    # 系统提示词
-    if enable_code_exec:
-        llm_system_message = config.SYSTEM_PROMPT_WITH_CODE_EXEC
-    else:
-        llm_system_message = config.SYSTEM_PROMPT_DEFAULT
-    messages_for_llm.insert(0, {"role": "system", "content": llm_system_message})
-
-    last_msg_idx = history[-1].idx if history else -1
-    next_seq = history[-1].seq + 1 if history else 0
-
     # 处理附件
-    uploaded_attachments = await get_message_attachments_db(db, session_id, None)
-    final_message = request.message
-    valid_attachments = []
-    if request.attachments_file_id and uploaded_attachments:
-        # 分能不能使用sandbox处理。不能则将文本附加到用户消息；能则将文件名附加到用户消息，文件上传到sandbox
-        for att in uploaded_attachments:
-            if att["id"] in request.attachments_file_id:
-                if enable_code_exec and sandbox_id:
-                    async with aiofiles.open(att["file_path"], mode='rb') as f:
-                        if await upload_file_to_sandbox(sandbox_id, f"/workspace/{att["original_filename"]}", await f.read()):
-                            final_message += f"\n[{att['original_filename']}]"
-                        else:
-                            logger.warning(f"Failed to upload to sandbox: {att["file_path"]}")
-                else:
-                    if att["mime_type"].startswith("text"):
-                        async with aiofiles.open(att["file_path"], encoding="utf-8") as f:
-                            text_content = await f.read(100000)
-                            final_message += f"\n[{att['original_filename']}]\n{text_content}"
-                            if len(text_content) >= 100000:
-                                final_message += "\n[file truncated at 100KB]"
-                valid_attachments.append(att)
+    requested_ids = set(request.attachments_file_id or [])
+    pending_attachments = await get_message_attachments_db(db, session_id, None) or []
+    current_attachments = [att for att in pending_attachments if att["id"] in requested_ids]
 
-    message_id = await save_message_db(db, session_id, next_seq, last_msg_idx + 1, "user", "message", final_message)
+    # 保存原始用户消息到 DB（不含附件标记）
+    user_message = request.message
+    message_id = await save_message_db(db, session_id, next_seq, last_msg_idx + 1, "user", "message", user_message)
     next_seq += 1
     last_msg_idx += 1
 
-    for att in valid_attachments:
+    for att in current_attachments:
         await db.execute("UPDATE files SET message_id = ? WHERE id = ?", (message_id, att["id"]))
     await db.commit()
 
-    # 构建用户消息：仅当 sandbox 不可用时，将图片/音频作为多模态内容注入。
-    # sandbox 可用时文件已在 /workspace/ 中，LLM 通过 read_image/read_audio 工具访问。
-    accept_img = model_info.get("accept_image")
-    accept_aud = model_info.get("accept_audio")
-    if not enable_code_exec and (accept_img or accept_aud):
-        content_parts = [{"type": "text", "text": final_message}]
-        has_multimodal = False
-        for att in valid_attachments:
-            mime = att["mime_type"]
-            if accept_img and mime.startswith("image/"):
-                async with aiofiles.open(att["file_path"], mode='rb') as f:
-                    img_bytes = await f.read()
-                fmt = mime.split("/")[-1]
-                compressed, final_fmt = await _compress_image_if_needed(img_bytes, fmt)
-                final_mime = f"image/{final_fmt}"
-                b64 = base64.b64encode(compressed).decode("utf-8")
-                content_parts.append({"type": "image_url", "image_url": {"url": f"data:{final_mime};base64,{b64}"}})
-                has_multimodal = True
-            elif accept_aud and mime.startswith("audio/"):
-                async with aiofiles.open(att["file_path"], mode='rb') as f:
-                    aud_bytes = await f.read()
-                aud_b64 = base64.b64encode(aud_bytes).decode("utf-8")
-                audio_format = mime.split("/")[-1]
-                fmt_map = {"mpeg": "mp3", "mp4": "m4a"}
-                audio_format = fmt_map.get(audio_format, audio_format)
-                content_parts.append({"type": "input_audio", "input_audio": {"data": aud_b64, "format": audio_format}})
-                has_multimodal = True
-        if has_multimodal:
-            messages_for_llm.append({"role": "user", "content": content_parts})
-        else:
-            messages_for_llm.append({"role": "user", "content": final_message})
-    else:
-        messages_for_llm.append({"role": "user", "content": final_message})
+    # 构建 LLM 上下文消息（含附件文件名/内容标记）
+    llm_message = request.message
+    for att in current_attachments:
+        if enable_code_exec and sandbox_id:
+            async with aiofiles.open(att["file_path"], mode="rb") as f:
+                if await upload_file_to_sandbox(sandbox_id, f"/workspace/{att['original_filename']}", await f.read()):
+                    llm_message += f"\n[{att['original_filename']}]"
+                else:
+                    logger.warning(f"Failed to upload to sandbox: {att['file_path']}")
+        elif att["mime_type"].startswith("text/"):
+            async with aiofiles.open(att["file_path"], encoding="utf-8") as f:
+                text_content = await f.read(100000)
+                llm_message += f"\n[{att['original_filename']}]\n{text_content}"
+                if len(text_content) >= 100000:
+                    llm_message += "\n[file truncated at 100KB]"
+
+    # 一次性构建 LLM 消息列表
+    messages_for_llm = await build_messages_for_llm(
+        history=history,
+        history_attachments=history_attachments,
+        current_attachments=current_attachments,
+        final_message=llm_message,
+        model_info=model_info,
+        enable_code_exec=enable_code_exec,
+    )
 
     async def event_generator():
         nonlocal next_seq
@@ -461,14 +529,18 @@ async def chat_stream(
                         is_error_dict = isinstance(result, dict) and result.get("type") == "error"
 
                         if is_error_dict:
-                            display_content = result.get("content", str(result))
-                            db_content = result.get("content", str(result))
+                            display_content = result.get("content", "error")
+                            db_content = display_content
                         elif is_multimodal:
                             display_content = f"Loaded [{result['type']}]: {result.get('file_path', '')}"
                             db_content = display_content
+                        elif isinstance(result, dict):
+                            logger.warning(f"Unexpected dict tool result for {func_name}: {list(result.keys())}")
+                            display_content = str(result.get("content", ""))
+                            db_content = display_content
                         else:
                             display_content = str(result)
-                            db_content = str(result)
+                            db_content = display_content
 
                         yield f"data: {json.dumps({'type': 'tool_result', 'content': display_content})}\n\n"
                         while not keepalive_queue.empty():
@@ -477,14 +549,13 @@ async def chat_stream(
                         next_seq += 1
 
                         if isinstance(result, dict) and result.get("type") == "image":
-                            data_url = f"data:{result['mime_type']};base64,{result['data']}"
                             messages_for_llm.append({
                                 "role": "tool",
                                 "tool_call_id": tool_call_id,
                                 "name": func_name,
                                 "content": [
                                     {"type": "text", "text": f"Image loaded: {result.get('file_path', '')}"},
-                                    {"type": "image_url", "image_url": {"url": data_url}}
+                                    LLMProvider.build_image_content(result["mime_type"], result["data"]),
                                 ]
                             })
                         elif isinstance(result, dict) and result.get("type") == "audio":
@@ -497,7 +568,7 @@ async def chat_stream(
                                 "name": func_name,
                                 "content": [
                                     {"type": "text", "text": f"Audio loaded: {result.get('file_path', '')}"},
-                                    {"type": "input_audio", "input_audio": {"data": result["data"], "format": audio_format}}
+                                    LLMProvider.build_audio_content(result["data"], audio_format),
                                 ]
                             })
                         else:
