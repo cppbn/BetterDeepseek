@@ -47,6 +47,7 @@ TITLE_MAX_LENGTH = 40
 async def _build_attachment_content_parts(
     attachments: list[dict],
     model_info: dict,
+    llm_provider: "LLMProvider",
 ) -> list[dict]:
     """将附件中模型支持的图片/音频编码为多模态 content parts 列表。
 
@@ -66,12 +67,12 @@ async def _build_attachment_content_parts(
             compressed, final_fmt = await _compress_image_if_needed(img_bytes, fmt)
             final_mime = f"image/{final_fmt}"
             b64 = base64.b64encode(compressed).decode("utf-8")
-            parts.append(LLMProvider.build_image_content(final_mime, b64))
+            parts.append(llm_provider.build_image_content(final_mime, b64))
         elif accept_aud and mime.startswith("audio/"):
             async with aiofiles.open(att["file_path"], mode="rb") as f:
                 aud_bytes = await f.read()
             aud_b64 = base64.b64encode(aud_bytes).decode("utf-8")
-            parts.append(LLMProvider.build_audio_content(mime, aud_b64))
+            parts.append(llm_provider.build_audio_content(mime, aud_b64))
 
     return parts
 
@@ -81,6 +82,7 @@ async def _enrich_history_multimodal(
     history: list,
     attachment_map: dict[int, list[dict]],
     model_info: dict,
+    llm_provider: "LLMProvider",
 ) -> list[dict[str, Any]]:
     """将历史用户消息中附带的图片/音频编码为多模态 content 数组。
 
@@ -113,7 +115,7 @@ async def _enrich_history_multimodal(
             result.append(llm_msg)
             continue
 
-        parts = await _build_attachment_content_parts(atts, model_info)
+        parts = await _build_attachment_content_parts(atts, model_info, llm_provider)
         if parts:
             content_parts = [{"type": "text", "text": llm_msg["content"]}] + parts
             result.append({"role": "user", "content": content_parts})
@@ -181,6 +183,7 @@ async def build_messages_for_llm(
     final_message: str,
     model_info: dict,
     enable_code_exec: bool,
+    llm_provider: "LLMProvider",
 ) -> list[dict[str, Any]]:
     """一次性构建完整的 LLM 消息列表。
 
@@ -200,14 +203,14 @@ async def build_messages_for_llm(
 
     if not enable_code_exec and (model_info.get("accept_image") or model_info.get("accept_audio")):
         messages_for_llm = await _enrich_history_multimodal(
-            messages_for_llm, history, history_attachments, model_info
+            messages_for_llm, history, history_attachments, model_info, llm_provider
         )
 
     system_prompt = config.SYSTEM_PROMPT_WITH_CODE_EXEC if enable_code_exec else config.SYSTEM_PROMPT_DEFAULT
     messages_for_llm.insert(0, {"role": "system", "content": system_prompt})
 
     if not enable_code_exec and (model_info.get("accept_image") or model_info.get("accept_audio")):
-        parts = await _build_attachment_content_parts(current_attachments, model_info)
+        parts = await _build_attachment_content_parts(current_attachments, model_info, llm_provider)
         if parts:
             messages_for_llm.append({"role": "user", "content": [{"type": "text", "text": final_message}] + parts})
         else:
@@ -390,6 +393,7 @@ async def chat_stream(
         final_message=llm_message,
         model_info=model_info,
         enable_code_exec=enable_code_exec,
+        llm_provider=llm_provider,
     )
 
     async def event_generator():
@@ -552,7 +556,7 @@ async def chat_stream(
                                 "name": func_name,
                                 "content": [
                                     {"type": "text", "text": f"Image loaded: {result.get('file_path', '')}"},
-                                    LLMProvider.build_image_content(result["mime_type"], result["data"]),
+                                    llm_provider.build_image_content(result["mime_type"], result["data"]),
                                 ]
                             })
                         elif isinstance(result, dict) and result.get("type") == "audio":
@@ -562,7 +566,7 @@ async def chat_stream(
                                 "name": func_name,
                                 "content": [
                                     {"type": "text", "text": f"Audio loaded: {result.get('file_path', '')}"},
-                                    LLMProvider.build_audio_content(result["mime_type"], result["data"]),
+                                    llm_provider.build_audio_content(result["mime_type"], result["data"]),
                                 ]
                             })
                         else:

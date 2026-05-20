@@ -83,11 +83,4 @@ class DeepSeekProvider(LLMProvider):
                 continue
 
     def convert_messages_to_provider_format(self, messages):
-        result = []
-        for msg in messages:
-            content = msg.get("content")
-            if isinstance(content, list):
-                msg = dict(msg)
-                msg["content"] = LLMProvider._convert_content_to_openai(content)
-            result.append(msg)
-        return result
+        return messages

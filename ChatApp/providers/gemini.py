@@ -14,6 +14,12 @@ class GeminiProvider(LLMProvider):
         self._model = ""
         self._thought_signature: Optional[str] = None
 
+    def build_image_content(self, mime_type: str, base64_data: str) -> dict[str, Any]:
+        return {"inlineData": {"mimeType": mime_type, "data": base64_data}}
+
+    def build_audio_content(self, mime_type: str, base64_data: str) -> dict[str, Any]:
+        return {"inlineData": {"mimeType": mime_type, "data": base64_data}}
+
     def get_api_url(self) -> str:
         return f"{self.base_url}/models/{self._model}:streamGenerateContent?alt=sse"
 
@@ -258,6 +264,8 @@ def _build_parts(msg: Dict[str, Any], role: str) -> List[Dict[str, Any]]:
             if isinstance(item, dict):
                 if item.get("type") == "text":
                     parts.append({"text": item["text"]})
+                elif "inlineData" in item:
+                    parts.append(item)
                 elif item.get("type") == "image":
                     mime_type = item.get("mime_type", "image/png")
                     data = item.get("data", "")

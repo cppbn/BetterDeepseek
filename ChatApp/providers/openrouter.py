@@ -87,16 +87,12 @@ class OpenRouterProvider(LLMProvider):
     def convert_messages_to_provider_format(self, messages):
         result = []
         for msg in messages:
-            content = msg.get("content")
             if msg["role"] == "user" or msg["role"] == "tool":
-                converted = dict(msg)
-                if isinstance(content, list):
-                    converted["content"] = LLMProvider._convert_content_to_openai(content)
-                result.append(converted)
+                result.append(msg)
             elif msg["role"] == "assistant":
                 result.append({
                     "role": msg["role"],
-                    "content": LLMProvider._convert_content_to_openai(content) if isinstance(content, list) else msg.get("content"),
+                    "content": msg.get("content"),
                     "reasoning": msg.get("reasoning_content"),
                     "tool_calls": msg.get("tool_calls")
                 })
