@@ -83,5 +83,11 @@ class DeepSeekProvider(LLMProvider):
                 continue
 
     def convert_messages_to_provider_format(self, messages):
-        # DeepSeek 直接支持我们的内部格式，无需转换
-        return messages
+        result = []
+        for msg in messages:
+            content = msg.get("content")
+            if isinstance(content, list):
+                msg = dict(msg)
+                msg["content"] = LLMProvider._convert_content_to_openai(content)
+            result.append(msg)
+        return result

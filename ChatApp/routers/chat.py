@@ -71,10 +71,7 @@ async def _build_attachment_content_parts(
             async with aiofiles.open(att["file_path"], mode="rb") as f:
                 aud_bytes = await f.read()
             aud_b64 = base64.b64encode(aud_bytes).decode("utf-8")
-            audio_format = mime.split("/")[-1]
-            fmt_map = {"mpeg": "mp3", "mp4": "m4a"}
-            audio_format = fmt_map.get(audio_format, audio_format)
-            parts.append(LLMProvider.build_audio_content(aud_b64, audio_format))
+            parts.append(LLMProvider.build_audio_content(mime, aud_b64))
 
     return parts
 
@@ -559,16 +556,13 @@ async def chat_stream(
                                 ]
                             })
                         elif isinstance(result, dict) and result.get("type") == "audio":
-                            audio_format = result["mime_type"].split("/")[-1]
-                            format_map = {"mpeg": "mp3", "mp4": "m4a"}
-                            audio_format = format_map.get(audio_format, audio_format)
                             messages_for_llm.append({
                                 "role": "tool",
                                 "tool_call_id": tool_call_id,
                                 "name": func_name,
                                 "content": [
                                     {"type": "text", "text": f"Audio loaded: {result.get('file_path', '')}"},
-                                    LLMProvider.build_audio_content(result["data"], audio_format),
+                                    LLMProvider.build_audio_content(result["mime_type"], result["data"]),
                                 ]
                             })
                         else:

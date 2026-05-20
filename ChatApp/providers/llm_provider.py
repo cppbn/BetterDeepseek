@@ -6,14 +6,45 @@ class LLMProvider(ABC):
     """LLM 服务商抽象接口"""
 
     @staticmethod
-    def build_image_content(media_type: str, base64_data: str) -> dict[str, Any]:
-        """构建统一的内部 image 内容格式。"""
-        return {"type": "image_url", "image_url": {"url": f"data:{media_type};base64,{base64_data}"}}
+    def build_image_content(mime_type: str, base64_data: str) -> dict[str, Any]:
+        """构建 provider-agnostic 内部 image 内容格式。"""
+        return {"type": "image", "mime_type": mime_type, "data": base64_data}
 
     @staticmethod
-    def build_audio_content(base64_data: str, audio_format: str) -> dict[str, Any]:
-        """构建统一的内部 audio 内容格式。"""
-        return {"type": "input_audio", "input_audio": {"data": base64_data, "format": audio_format}}
+    def build_audio_content(mime_type: str, base64_data: str) -> dict[str, Any]:
+        """构建 provider-agnostic 内部 audio 内容格式。"""
+        return {"type": "audio", "mime_type": mime_type, "data": base64_data}
+
+    @staticmethod
+    def _convert_content_to_openai(content):
+        """将 provider-agnostic 内容转换为 OpenAI 格式。
+
+        供 DeepSeek / OpenRouter 等 OpenAI 兼容 provider 调用。
+        """
+        if not isinstance(content, list):
+            return content
+        result = []
+        for item in content:
+            if not isinstance(item, dict):
+                result.append(item)
+                continue
+            t = item.get("type")
+            if t == "text":
+                result.append(item)
+            elif t == "image":
+                mime = item.get("mime_type", "image/png")
+                data = item.get("data", "")
+                result.append({"type": "image_url", "image_url": {"url": f"data:{mime};base64,{data}"}})
+            elif t == "audio":
+                mime = item.get("mime_type", "audio/wav")
+                data = item.get("data", "")
+                fmt = mime.split("/")[-1]
+                fmt_map = {"mpeg": "mp3", "mp4": "m4a"}
+                fmt = fmt_map.get(fmt, fmt)
+                result.append({"type": "input_audio", "input_audio": {"data": data, "format": fmt}})
+            else:
+                result.append(item)
+        return result
 
     @abstractmethod
     def get_api_url(self) -> str:

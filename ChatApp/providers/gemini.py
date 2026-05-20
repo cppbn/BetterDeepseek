@@ -258,17 +258,16 @@ def _build_parts(msg: Dict[str, Any], role: str) -> List[Dict[str, Any]]:
             if isinstance(item, dict):
                 if item.get("type") == "text":
                     parts.append({"text": item["text"]})
-                elif item.get("type") == "image_url":
-                    url = item.get("image_url", {}).get("url", "")
-                    mime_type, data = _parse_data_url(url)
-                    if mime_type and data:
+                elif item.get("type") == "image":
+                    mime_type = item.get("mime_type", "image/png")
+                    data = item.get("data", "")
+                    if data:
                         parts.append({
                             "inlineData": {"mimeType": mime_type, "data": data}
                         })
-                elif item.get("type") == "input_audio":
-                    aud = item.get("input_audio", {})
-                    data = aud.get("data", "")
-                    mime_type = aud.get("format", "audio/wav")
+                elif item.get("type") == "audio":
+                    mime_type = item.get("mime_type", "audio/wav")
+                    data = item.get("data", "")
                     if data:
                         parts.append({
                             "inlineData": {"mimeType": mime_type, "data": data}
@@ -305,17 +304,6 @@ def _build_parts(msg: Dict[str, Any], role: str) -> List[Dict[str, Any]]:
                 parts.append({"thoughtSignature": thought_sig})
 
     return parts
-
-
-def _parse_data_url(url: str) -> tuple:
-    if not url.startswith("data:"):
-        return "", ""
-    try:
-        header, b64 = url.split(",", 1)
-        mime_type = header.split(":")[1].split(";")[0]
-        return mime_type, b64
-    except (IndexError, ValueError):
-        return "", ""
 
 
 _TYPE_MAP = {
