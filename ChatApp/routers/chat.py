@@ -27,6 +27,7 @@ from ChatApp.providers.models import supported_models
 from ChatApp.providers.deepseek import DeepSeekProvider
 from ChatApp.providers.openrouter import OpenRouterProvider
 from ChatApp.providers.gemini import GeminiProvider
+from ChatApp.providers.opencode_go import OpenCodeGoProvider
 from ChatApp.providers.model_manager import get_title_model
 
 from ChatApp.providers.llm_provider import LLMProvider
@@ -35,6 +36,7 @@ PROVIDER_MAP = {
     "deepseek": lambda: DeepSeekProvider(api_key=config.DEEPSEEK_API_KEY),
     "openrouter": lambda: OpenRouterProvider(api_key=config.OPENROUTER_API_KEY),
     "gemini": lambda: GeminiProvider(api_key=config.GEMINI_API_KEY),
+    "opencode_go": lambda: OpenCodeGoProvider(api_key=config.OPENCODE_GO_API_KEY),
 }
 
 logger = logging.getLogger(__name__)
@@ -555,7 +557,7 @@ async def chat_stream(
                                 "tool_call_id": tool_call_id,
                                 "name": func_name,
                                 "content": [
-                                    {"type": "text", "text": f"Image loaded: {result.get('file_path', '')}"},
+                                    # {"type": "text", "text": f"Image loaded: {result.get('file_path', '')}"},
                                     llm_provider.build_image_content(result["mime_type"], result["data"]),
                                 ]
                             })
@@ -565,7 +567,7 @@ async def chat_stream(
                                 "tool_call_id": tool_call_id,
                                 "name": func_name,
                                 "content": [
-                                    {"type": "text", "text": f"Audio loaded: {result.get('file_path', '')}"},
+                                    # {"type": "text", "text": f"Audio loaded: {result.get('file_path', '')}"},
                                     llm_provider.build_audio_content(result["mime_type"], result["data"]),
                                 ]
                             })

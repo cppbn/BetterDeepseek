@@ -1,4 +1,4 @@
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 from typing import List, Optional
 from datetime import datetime
 
@@ -39,11 +39,18 @@ class MessageResponse(BaseModel):
 
 
 class ChatRequest(BaseModel):
-    message: str = Field(..., min_length=1, max_length=4000)
+    message: str = Field(..., max_length=4000)
     attachments_file_id: Optional[List[str]] = None
     model: Optional[str] = None
     enable_search: bool = Field(default=True)
     enable_code_exec: bool = Field(default=True)
+
+    @model_validator(mode='after')
+    def check_message_or_attachments(self):
+        has_attachments = bool(self.attachments_file_id)
+        if not has_attachments and not self.message.strip():
+            raise ValueError('message is required when no attachments are provided')
+        return self
 
 
 class UserInfo(BaseModel):

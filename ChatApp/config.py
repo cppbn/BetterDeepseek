@@ -2,6 +2,7 @@ import os
 DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY", "")
 OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY", "")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
+OPENCODE_GO_API_KEY = os.getenv("OPENCODE_GO_API_KEY", "")
 
 JWT_SECRET_KEY = os.getenv("JWT_SECRET_KEY")
 ALGORITHM = "HS256"
