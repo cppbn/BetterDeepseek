@@ -88,6 +88,11 @@ export const adminApi = {
     return apiClient.post('/admin/models/reset', null, { headers: adminHeaders() });
   },
 
+  // Providers
+  getProviders() {
+    return apiClient.get<{ providers: string[] }>('/admin/providers', { headers: adminHeaders() });
+  },
+
   // Users
   getUsers() {
     return apiClient.get<UserRecord[]>('/admin/users', { headers: adminHeaders() });

@@ -101,34 +101,64 @@
       <div v-if="activeTab === 'models'">
         <div class="flex items-center justify-between mb-4">
           <h2 class="text-lg font-semibold">模型配置</h2>
-          <div class="flex gap-2">
-            <button @click="resetModels" class="px-4 py-1.5 text-sm border rounded-lg hover:bg-gray-50 text-gray-600">
-              重置默认
-            </button>
-            <button @click="startNewModel" class="px-4 py-1.5 bg-blue-600 text-white text-sm rounded-lg hover:bg-blue-700">
-              + 添加模型
-            </button>
-          </div>
+          <button @click="resetModels" class="px-4 py-1.5 text-sm border rounded-lg hover:bg-gray-50 text-gray-600">
+            重置默认
+          </button>
         </div>
         <div v-if="modelsLoading" class="text-gray-400">加载中...</div>
         <div v-else>
-          <div v-for="m in models" :key="m.key" class="border rounded-lg p-4 mb-3">
-            <div class="flex items-center justify-between mb-2">
-              <span class="font-medium">{{ m.key }}</span>
-              <div class="flex gap-3">
-                <button @click="editModel(m)" class="text-sm text-blue-600 hover:underline">编辑</button>
-                <button @click="removeModel(m.key)" class="text-sm text-red-500 hover:underline">删除</button>
+
+          <!-- 对话模型 -->
+          <div class="mb-6">
+            <div class="flex items-center justify-between mb-3">
+              <h3 class="font-medium text-gray-700">对话模型</h3>
+              <button @click="startNewModel('chat')" class="px-3 py-1 text-xs bg-blue-600 text-white rounded-lg hover:bg-blue-700">
+                + 添加
+              </button>
+            </div>
+            <div v-for="m in chatModels" :key="m.key" class="border rounded-lg p-3 mb-2">
+              <div class="flex items-center justify-between mb-1">
+                <span class="font-medium text-sm">{{ m.key }}</span>
+                <div class="flex gap-3">
+                  <button @click="editModel(m)" class="text-xs text-blue-600 hover:underline">编辑</button>
+                  <button @click="removeModel(m.key)" class="text-xs text-red-500 hover:underline">删除</button>
+                </div>
+              </div>
+              <div class="text-xs text-gray-500 space-x-3">
+                <span>提供商: {{ m.provider }}</span>
+                <span>模型: {{ m.model }}</span>
+                <span v-if="m.thinking" class="text-blue-500">推理</span>
+                <span v-if="m.accept_image" class="text-green-500">图片</span>
+                <span v-if="m.accept_audio" class="text-purple-500">音频</span>
+                <span v-if="m.is_default" class="text-orange-500 font-bold">默认</span>
               </div>
             </div>
-            <div class="text-xs text-gray-500 space-x-3">
-              <span>提供商: {{ m.provider }}</span>
-              <span>模型: {{ m.model }}</span>
-              <span>分类: {{ categoryLabel(m.category) }}</span>
-              <span v-if="m.thinking" class="text-blue-500">推理</span>
-              <span v-if="m.accept_image" class="text-green-500">图片</span>
-              <span v-if="m.accept_audio" class="text-purple-500">音频</span>
-              <span v-if="m.is_default" class="text-orange-500 font-bold">默认</span>
+            <p v-if="chatModels.length === 0" class="text-xs text-gray-400">暂无对话模型</p>
+          </div>
+
+          <!-- 专用模型 -->
+          <div>
+            <div class="flex items-center justify-between mb-3">
+              <h3 class="font-medium text-gray-700">专用模型</h3>
+              <button @click="startNewModel('special')" class="px-3 py-1 text-xs bg-blue-600 text-white rounded-lg hover:bg-blue-700">
+                + 添加
+              </button>
             </div>
+            <div v-for="m in specialModels" :key="m.key" class="border rounded-lg p-3 mb-2">
+              <div class="flex items-center justify-between mb-1">
+                <span class="font-medium text-sm">{{ m.key }}</span>
+                <div class="flex gap-3">
+                  <button @click="editModel(m)" class="text-xs text-blue-600 hover:underline">编辑</button>
+                  <button @click="removeModel(m.key)" class="text-xs text-red-500 hover:underline">删除</button>
+                </div>
+              </div>
+              <div class="text-xs text-gray-500 space-x-3">
+                <span>提供商: {{ m.provider }}</span>
+                <span>模型: {{ m.model }}</span>
+                <span>分类: {{ categoryLabel(m.category) }}</span>
+              </div>
+            </div>
+            <p v-if="specialModels.length === 0" class="text-xs text-gray-400">暂无专用模型</p>
           </div>
 
           <!-- 编辑/新建弹窗 -->
@@ -141,22 +171,17 @@
                     :disabled="!editingModel._new" /></div>
                 <div><label class="text-xs text-gray-500">提供商</label>
                    <select v-model="editingModel.provider" class="w-full border rounded px-3 py-1.5 text-sm">
-                     <option>deepseek</option><option>openrouter</option><option>gemini</option>
+                     <option v-for="p in providers" :key="p" :value="p">{{ p }}</option>
                    </select></div>
                 <div><label class="text-xs text-gray-500">模型 ID</label>
                   <input v-model="editingModel.model" class="w-full border rounded px-3 py-1.5 text-sm" /></div>
-                <div><label class="text-xs text-gray-500">分类</label>
-                  <select v-model="editingModel.category" class="w-full border rounded px-3 py-1.5 text-sm">
-                    <option value="chat">对话</option>
-                    <option value="image">图片识别</option>
-                    <option value="audio">音频识别</option>
-                    <option value="title">标题生成</option>
-                  </select></div>
-                <div class="flex gap-4 flex-wrap">
-                  <label class="flex items-center gap-1 text-sm"><input type="checkbox" v-model="editingModel.thinking"> 推理模式</label>
-                  <label class="flex items-center gap-1 text-sm"><input type="checkbox" v-model="editingModel.accept_image"> 支持图片</label>
-                  <label class="flex items-center gap-1 text-sm"><input type="checkbox" v-model="editingModel.accept_audio"> 支持音频</label>
-                  <label class="flex items-center gap-1 text-sm"><input type="checkbox" v-model="editingModel.is_default"> 设为默认</label>
+                <div v-if="editingModel.category === 'chat'">
+                  <div class="flex gap-4 flex-wrap">
+                    <label class="flex items-center gap-1 text-sm"><input type="checkbox" v-model="editingModel.thinking"> 推理模式</label>
+                    <label class="flex items-center gap-1 text-sm"><input type="checkbox" v-model="editingModel.accept_image"> 支持图片</label>
+                    <label class="flex items-center gap-1 text-sm"><input type="checkbox" v-model="editingModel.accept_audio"> 支持音频</label>
+                    <label class="flex items-center gap-1 text-sm"><input type="checkbox" v-model="editingModel.is_default"> 设为默认</label>
+                  </div>
                 </div>
               </div>
               <div class="flex justify-end gap-2 mt-5">
@@ -245,7 +270,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted } from 'vue';
+import { ref, onMounted, computed } from 'vue';
 import { adminApi, type ModelConfig, type UserRecord, type TokenUsage, type EnvConfig } from '@/api/admin';
 
 // ===== 验证状态 =====
@@ -327,6 +352,7 @@ function loadAll() {
   loadModels();
   loadUsers();
   loadUsage();
+  loadProviders();
 }
 
 // ===== 配置 =====
@@ -369,16 +395,27 @@ async function copyText(text: string) {
 const models = ref<ModelConfig[]>([]);
 const editingModel = ref<(ModelConfig & { _new?: boolean }) | null>(null);
 const modelsLoading = ref(false);
+const providers = ref<string[]>([]);
+
+const chatModels = computed(() => models.value.filter(m => m.category === 'chat'));
+const specialModels = computed(() => models.value.filter(m => m.category !== 'chat'));
+
 async function loadModels() {
   modelsLoading.value = true;
   try { const { data } = await adminApi.getModels(); models.value = data; }
   catch { models.value = []; }
   finally { modelsLoading.value = false; }
 }
-function startNewModel() {
+async function loadProviders() {
+  try {
+    const { data } = await adminApi.getProviders();
+    providers.value = data.providers;
+  } catch { providers.value = []; }
+}
+function startNewModel(type: 'chat' | 'special') {
   editingModel.value = {
-    key: '', provider: 'deepseek', model: '', thinking: true,
-    accept_image: false, accept_audio: false, is_default: false, category: 'chat', _new: true,
+    key: '', provider: providers.value[0] || '', model: '', thinking: false,
+    accept_image: false, accept_audio: false, is_default: false, category: type === 'chat' ? 'chat' : 'title', _new: true,
   };
 }
 function editModel(m: ModelConfig) {

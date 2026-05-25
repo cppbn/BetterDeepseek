@@ -6,6 +6,7 @@ from pydantic import BaseModel
 from typing import Optional
 
 from ChatApp import config
+from ChatApp.routers.chat import PROVIDER_MAP
 from ChatApp.database import (
     get_db, get_all_model_configs_db, get_model_config_db, upsert_model_config_db,
     delete_model_config_db, reset_model_configs_db, get_all_users_db, delete_user_db,
@@ -89,6 +90,13 @@ async def list_env():
     return [{"key": k, "value": getattr(config, k, None)} for k in sorted(ALLOWED_KEYS)]
 
 
+# ===================== Providers =====================
+
+@router.get("/providers", dependencies=[Depends(verify_admin_key)])
+async def list_providers():
+    return {"providers": list(PROVIDER_MAP.keys())}
+
+
 # ===================== Model Configs =====================
 
 @router.get("/models", dependencies=[Depends(verify_admin_key)])
@@ -108,6 +116,8 @@ async def get_model(key: str, db: aiosqlite.Connection = Depends(get_db)):
 async def upsert_model(key: str, body: ModelConfigIn, db: aiosqlite.Connection = Depends(get_db)):
     if key != body.key:
         raise HTTPException(status_code=400, detail="Key in path must match key in body")
+    if body.provider not in PROVIDER_MAP:
+        raise HTTPException(status_code=400, detail=f"Unknown provider '{body.provider}'. Available: {list(PROVIDER_MAP.keys())}")
     await upsert_model_config_db(db, body.key, body.provider, body.model,
                                   int(body.thinking), int(body.accept_image),
                                   int(body.accept_audio), int(body.is_default), body.category)
