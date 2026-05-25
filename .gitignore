@@ -6,8 +6,6 @@ __pycache__/
 env/
 venv/
 .venv/
-dist/
-build/
 *.egg-info/
 
 # nodejs
@@ -15,17 +13,39 @@ node_modules/
 npm-debug.log
 yarn-error.log
 .env
+
+# general build output
 dist/
 build/
 
 #vscode
 .vscode/
 
+# android / kotlin / gradle
+.gradle/
+.idea/
+*.iml
+.kotlin/
+local.properties
+*.apk
+*.aab
+*.ap_
+*.dex
+!gradlew
+*.hprof
+
+# nodejs (Frontend)
+Frontend/node_modules/
+Frontend/dist/
+
+# os
+.DS_Store
+Thumbs.db
+
 chat.db
 uploads/*
-*.sh
 test.py
 api-docs.md
 TODO.md
-gemini-api-docs.md
+*.sh
 *.zip

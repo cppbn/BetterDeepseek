@@ -271,7 +271,13 @@ async def chat_stream(
     if not await session_belongs_to_user(db, session_id, current_user["id"]):
         raise HTTPException(status_code=404, detail="Session not exists or Unauthenticated")
 
-    model_info = supported_models.get(request.model or "default") or supported_models["default"]
+    model_key = request.model
+    if model_key and model_key in supported_models:
+        model_info = supported_models[model_key]
+    elif "default" in supported_models:
+        model_info = supported_models["default"]
+    else:
+        model_info = next(iter(supported_models.values()))
     llm_provider = PROVIDER_MAP[model_info["provider"]]()
 
     # 获取历史消息
