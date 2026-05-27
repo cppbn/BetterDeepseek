@@ -33,6 +33,7 @@ local.properties
 *.dex
 !gradlew
 *.hprof
+mobile/
 
 # nodejs (Frontend)
 Frontend/node_modules/

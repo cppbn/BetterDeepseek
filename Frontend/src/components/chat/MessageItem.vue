@@ -290,7 +290,7 @@
   </div>
 </template>
 <script setup lang="ts">
-import { ref, reactive, computed, onMounted } from 'vue';
+import { ref, reactive, computed, onMounted, watch } from 'vue';
 import {
   WrenchScrewdriverIcon,
   CheckCircleIcon,
@@ -652,12 +652,23 @@ async function fetchFileInfo(fileId: string) {
   }
 }
 
-onMounted(() => {
+function refreshAllFileIds() {
   if (props.message.attachments_file_id) {
     props.message.attachments_file_id.forEach(fetchFileInfo);
   }
   props.message.reasoningSteps?.forEach((step) => {
     step.attachments_file_id?.forEach(fetchFileInfo);
   });
-});
+}
+
+onMounted(refreshAllFileIds);
+
+watch(
+  () => [
+    props.message.attachments_file_id,
+    props.message.reasoningSteps?.flatMap((s) => s.attachments_file_id || []).join(',') || null,
+  ],
+  () => refreshAllFileIds(),
+  { deep: true },
+);
 </script>
