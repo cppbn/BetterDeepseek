@@ -1,15 +1,22 @@
 <template>
   <AppLayout>
+    <template #toolbar-left>
+      <ModelSelector
+        v-if="models"
+        v-model="currentModel"
+        :models="models"
+      />
+    </template>
+    <template #toolbar-right>
+      <button
+        @click="handleNewSession"
+        class="flex items-center gap-1.5 px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded-lg transition-colors text-sm"
+      >
+        <PlusIcon class="w-4 h-4" />
+        <span class="hidden sm:inline">新对话</span>
+      </button>
+    </template>
     <div class="flex-1 flex flex-col h-full">
-      <div class="border-b border-gray-200 bg-white px-4 py-2">
-        <div class="max-w-3xl mx-auto">
-          <ModelSelector
-            v-if="models"
-            v-model="currentModel"
-            :models="models"
-          />
-        </div>
-      </div>
       <MessageList
         :messages="sessionStore.currentMessages"
         :is-loading="sessionStore.isLoadingMessages"
@@ -35,6 +42,7 @@
 <script setup lang="ts">
 import { watch, onMounted, ref } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
+import { PlusIcon } from '@heroicons/vue/24/outline';
 import AppLayout from '@/components/layout/AppLayout.vue';
 import MessageList from '@/components/chat/MessageList.vue';
 import ChatInput from '@/components/chat/ChatInput.vue';
@@ -95,6 +103,12 @@ watch(
     if (newId) sessionStore.setCurrentSession(newId as string);
   }
 );
+
+async function handleNewSession() {
+  const newId = await sessionStore.createSession();
+  sessionStore.setCurrentSession(newId);
+  router.push(`/chat/${newId}`);
+}
 
 async function handleDelete(message: Message) {
   if (!sessionStore.currentSessionId) return;

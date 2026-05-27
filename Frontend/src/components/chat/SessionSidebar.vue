@@ -3,18 +3,6 @@
     class="bg-white border-r border-gray-200 flex flex-col shadow-sm transition-all duration-300"
     :class="collapsed ? 'w-16' : 'w-64'"
   >
-    <!-- 新对话按钮：折叠时只显示图标 -->
-    <div class="p-4 border-b border-gray-100">
-      <button
-        @click="handleNewSession"
-        class="w-full py-2.5 px-4 bg-blue-600 hover:bg-blue-700 text-white rounded-xl transition-colors flex items-center justify-center gap-2 shadow-sm"
-        :title="collapsed ? '新对话' : ''"
-      >
-        <PlusIcon class="w-5 h-5" />
-        <span v-if="!collapsed">新对话</span>
-      </button>
-    </div>
-
     <!-- 会话列表：折叠时只显示图标占位 -->
     <div class="flex-1 overflow-y-auto p-2 space-y-1">
       <div
@@ -62,10 +50,9 @@
 
 <script setup lang="ts">
 import { onMounted } from 'vue';
-import { PlusIcon, TrashIcon, ChatBubbleLeftIcon, UserCircleIcon } from '@heroicons/vue/24/outline';
+import { TrashIcon, UserCircleIcon } from '@heroicons/vue/24/outline';
 import { useSessionStore } from '@/stores/session';
 import { useAuthStore } from '@/stores/auth';
-import { useRouter } from 'vue-router';
 
 defineProps<{
   collapsed: boolean;
@@ -73,7 +60,6 @@ defineProps<{
 
 const sessionStore = useSessionStore();
 const authStore = useAuthStore();
-const router = useRouter();
 
 onMounted(() => {
   sessionStore.fetchSessions();
@@ -87,11 +73,6 @@ function formatDate(dateStr: string) {
   return new Date(utcTimestamp).toLocaleDateString('zh-CN', {
     month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', hour12: false,
   });
-}
-
-async function handleNewSession() {
-  const newId = await sessionStore.createSession();
-  sessionStore.setCurrentSession(newId);
 }
 
 function selectSession(sessionId: string) {

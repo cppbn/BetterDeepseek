@@ -38,7 +38,9 @@
           <Bars3Icon class="w-6 h-6 text-gray-600" />
         </button>
 
-        <h1 class="text-base md:text-lg font-semibold text-gray-800 mr-auto">Better Deepseek</h1>
+        <slot name="toolbar-left" />
+        <div class="flex-1" />
+        <slot name="toolbar-right" />
       </div>
 
       <slot />
