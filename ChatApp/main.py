@@ -4,7 +4,7 @@ from fastapi.middleware.cors import CORSMiddleware
 import logging
 
 from ChatApp.database import init_db
-from ChatApp.routers import auth, sessions, files, chat, admin, models
+from ChatApp.routers import auth, sessions, files, chat, admin, models, dev
 
 # 配置日志
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
@@ -37,6 +37,7 @@ app.include_router(sessions.router)
 app.include_router(files.router)
 app.include_router(chat.router)
 app.include_router(admin.router)
+app.include_router(dev.router)
 app.include_router(models.router)
 
 @app.get("/health")

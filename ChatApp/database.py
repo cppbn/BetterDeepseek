@@ -22,9 +22,14 @@ async def init_db():
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 username TEXT UNIQUE NOT NULL,
                 hashed_password TEXT NOT NULL,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                role TEXT DEFAULT 'user'
             )
         """)
+        try:
+            await db.execute("ALTER TABLE users ADD COLUMN role TEXT DEFAULT 'user'")
+        except Exception:
+            pass
         await db.execute("""
             CREATE TABLE IF NOT EXISTS sessions (
                 id TEXT PRIMARY KEY,
@@ -73,6 +78,7 @@ async def init_db():
         await db.commit()
         await _init_model_configs(db)
         await _init_token_usage(db)
+        await _init_developer_settings(db)
         logger.info("Database initialized")
 
 
@@ -133,6 +139,21 @@ async def _init_token_usage(db: aiosqlite.Connection):
             completion_tokens INTEGER DEFAULT 0,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             FOREIGN KEY (session_id) REFERENCES sessions (id) ON DELETE CASCADE,
+            FOREIGN KEY (user_id) REFERENCES users (id) ON DELETE CASCADE
+        )
+    """)
+    await db.commit()
+
+
+async def _init_developer_settings(db: aiosqlite.Connection):
+    """Create developer_settings table."""
+    await db.execute("""
+        CREATE TABLE IF NOT EXISTS developer_settings (
+            user_id INTEGER PRIMARY KEY,
+            system_prompt_default TEXT,
+            system_prompt_with_code_exec TEXT,
+            sandbox_network_disabled INTEGER DEFAULT 1,
+            sandbox_idle_timeout INTEGER DEFAULT 3600,
             FOREIGN KEY (user_id) REFERENCES users (id) ON DELETE CASCADE
         )
     """)
@@ -207,15 +228,58 @@ async def get_model_config_by_category_db(db: aiosqlite.Connection, category: st
 
 # ---------- 管理员: 用户管理 ----------
 async def get_all_users_db(db: aiosqlite.Connection) -> list[dict]:
-    cursor = await db.execute("SELECT id, username, created_at FROM users ORDER BY id")
+    cursor = await db.execute("SELECT id, username, created_at, role FROM users ORDER BY id")
     rows = await cursor.fetchall()
-    return [{"id": r[0], "username": r[1], "created_at": r[2]} for r in rows]
+    return [{"id": r[0], "username": r[1], "created_at": r[2], "role": r[3]} for r in rows]
 
 
 async def delete_user_db(db: aiosqlite.Connection, user_id: int) -> bool:
     cursor = await db.execute("DELETE FROM users WHERE id = ?", (user_id,))
     await db.commit()
     return cursor.rowcount > 0
+
+
+async def update_user_role_db(db: aiosqlite.Connection, user_id: int, role: str) -> bool:
+    cursor = await db.execute("UPDATE users SET role = ? WHERE id = ?", (role, user_id))
+    await db.commit()
+    return cursor.rowcount > 0
+
+
+async def get_dev_settings_db(db: aiosqlite.Connection, user_id: int) -> dict | None:
+    cursor = await db.execute(
+        "SELECT system_prompt_default, system_prompt_with_code_exec, sandbox_network_disabled, sandbox_idle_timeout FROM developer_settings WHERE user_id = ?",
+        (user_id,)
+    )
+    row = await cursor.fetchone()
+    if not row:
+        return None
+    return {
+        "system_prompt_default": row[0],
+        "system_prompt_with_code_exec": row[1],
+        "sandbox_network_disabled": bool(row[2]),
+        "sandbox_idle_timeout": row[3],
+    }
+
+
+async def upsert_dev_settings_db(
+    db: aiosqlite.Connection,
+    user_id: int,
+    system_prompt_default: str | None,
+    system_prompt_with_code_exec: str | None,
+    sandbox_network_disabled: bool | None,
+    sandbox_idle_timeout: int | None,
+):
+    await db.execute(
+        """INSERT INTO developer_settings (user_id, system_prompt_default, system_prompt_with_code_exec, sandbox_network_disabled, sandbox_idle_timeout)
+           VALUES (?, ?, ?, ?, ?)
+           ON CONFLICT(user_id) DO UPDATE SET
+               system_prompt_default = COALESCE(excluded.system_prompt_default, developer_settings.system_prompt_default),
+               system_prompt_with_code_exec = COALESCE(excluded.system_prompt_with_code_exec, developer_settings.system_prompt_with_code_exec),
+               sandbox_network_disabled = COALESCE(excluded.sandbox_network_disabled, developer_settings.sandbox_network_disabled),
+               sandbox_idle_timeout = COALESCE(excluded.sandbox_idle_timeout, developer_settings.sandbox_idle_timeout)""",
+        (user_id, system_prompt_default, system_prompt_with_code_exec, int(sandbox_network_disabled) if sandbox_network_disabled is not None else None, sandbox_idle_timeout)
+    )
+    await db.commit()
 
 
 # ---------- Token 用量 ----------

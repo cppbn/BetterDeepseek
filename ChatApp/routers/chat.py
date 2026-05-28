@@ -13,7 +13,8 @@ from ChatApp.pydantic_models import ChatRequest, MessageResponse
 from ChatApp.database import (
     get_db, session_belongs_to_user, get_messages_db, save_message_db,
     get_message_attachments_db, save_file, update_session_title_db,
-    get_session_title_db, save_token_usage_db, build_llm_messages
+    get_session_title_db, save_token_usage_db, build_llm_messages,
+    get_dev_settings_db
 )
 from ChatApp.dependencies import get_current_user
 import ChatApp.config as config
@@ -186,6 +187,7 @@ async def build_messages_for_llm(
     model_info: dict,
     enable_code_exec: bool,
     llm_provider: "LLMProvider",
+    dev_settings: dict | None = None,
 ) -> list[dict[str, Any]]:
     """一次性构建完整的 LLM 消息列表。
 
@@ -208,7 +210,10 @@ async def build_messages_for_llm(
             messages_for_llm, history, history_attachments, model_info, llm_provider
         )
 
-    system_prompt = config.SYSTEM_PROMPT_WITH_CODE_EXEC if enable_code_exec else config.SYSTEM_PROMPT_DEFAULT
+    if enable_code_exec:
+        system_prompt = dev_settings.get("system_prompt_with_code_exec") if dev_settings and dev_settings.get("system_prompt_with_code_exec") else config.SYSTEM_PROMPT_WITH_CODE_EXEC
+    else:
+        system_prompt = dev_settings.get("system_prompt_default") if dev_settings and dev_settings.get("system_prompt_default") else config.SYSTEM_PROMPT_DEFAULT
     messages_for_llm.insert(0, {"role": "system", "content": system_prompt})
 
     if not enable_code_exec and (model_info.get("accept_image") or model_info.get("accept_audio")):
@@ -303,7 +308,11 @@ async def chat_stream(
         logger.warning("Sandbox Unavailable")
         enable_code_exec = False
 
-    # 准备工具
+    dev_settings: dict | None = None
+    if current_user.get("role") == "developer":
+        dev_settings = await get_dev_settings_db(db, current_user["id"])
+        logger.info(f"Developer {current_user['username']} settings: loaded")
+
     tools_registry: Dict[str, Any] = {}
     tools_for_llm = []
     sandbox_id: Optional[str] = None
@@ -312,7 +321,14 @@ async def chat_stream(
         sandbox_id = running_sandboxes.get(session_id)
         if not sandbox_id or not await is_running(sandbox_id):
             try:
-                sandbox_id = await run_sandbox(image="python3.12-workspace" ,mem_limit="640m")
+                sandbox_network_disabled = dev_settings.get("sandbox_network_disabled", True) if dev_settings else True
+                sandbox_timeout = dev_settings.get("sandbox_idle_timeout") if dev_settings else None
+                sandbox_id = await run_sandbox(
+                    image="python3.12-workspace",
+                    mem_limit="640m",
+                    network_disabled=sandbox_network_disabled,
+                    idle_timeout=sandbox_timeout,
+                )
                 logger.info(f"Started new sandbox {sandbox_id} for session {session_id}")
             except Exception as e:
                 logger.error(f"Failed to start sandbox: {e}")
@@ -402,6 +418,7 @@ async def chat_stream(
         model_info=model_info,
         enable_code_exec=enable_code_exec,
         llm_provider=llm_provider,
+        dev_settings=dev_settings,
     )
 
     async def event_generator():

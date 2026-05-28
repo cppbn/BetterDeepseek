@@ -39,4 +39,4 @@ async def login(user: UserLogin, db: aiosqlite.Connection = Depends(get_db)):
 async def get_current_user_info(current_user: dict = Depends(get_current_user)):
     """获取当前登录用户的信息"""
     logger.info(f"User info requested for user_id={current_user['id']}")
-    return UserInfo(id=current_user["id"], username=current_user["username"])
+    return UserInfo(id=current_user["id"], username=current_user["username"], role=current_user.get("role", "user"))

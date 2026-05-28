@@ -199,12 +199,22 @@
         <div v-if="usersLoading" class="text-gray-400">加载中...</div>
         <table v-else class="w-full text-sm">
           <thead><tr class="text-left text-gray-500 border-b">
-            <th class="pb-2">ID</th><th class="pb-2">用户名</th><th class="pb-2">注册时间</th><th class="pb-2">操作</th>
+            <th class="pb-2">ID</th><th class="pb-2">用户名</th><th class="pb-2">角色</th><th class="pb-2">注册时间</th><th class="pb-2">操作</th>
           </tr></thead>
           <tbody>
             <tr v-for="u in users" :key="u.id" class="border-b">
               <td class="py-2">{{ u.id }}</td>
               <td>{{ u.username }}</td>
+              <td>
+                <select
+                  :value="u.role"
+                  @change="changeUserRole(u.id, ($event.target as HTMLSelectElement).value)"
+                  class="border rounded px-2 py-0.5 text-xs"
+                >
+                  <option value="user">用户</option>
+                  <option value="developer">开发者</option>
+                </select>
+              </td>
               <td class="text-gray-400">{{ u.created_at }}</td>
               <td><button @click="removeUser(u.id)" class="text-red-500 hover:underline text-xs">删除</button></td>
             </tr>
@@ -453,6 +463,13 @@ async function removeUser(id: number) {
   if (!confirm(`确定删除用户 ${id}？此操作不可撤销。`)) return;
   try { await adminApi.deleteUser(id); await loadUsers(); }
   catch { alert('删除失败'); }
+}
+async function changeUserRole(userId: number, role: string) {
+  try {
+    await adminApi.updateUserRole(userId, role);
+    const user = users.value.find(u => u.id === userId);
+    if (user) user.role = role;
+  } catch { alert('角色更新失败'); }
 }
 
 // ===== 用量 =====

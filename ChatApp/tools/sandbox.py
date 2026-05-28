@@ -70,7 +70,8 @@ async def run_sandbox(
     image: str = "python:3.12-slim",
     mem_limit: str = "256m",
     cpu_quota: int = 50000,
-    network_disabled: bool = True
+    network_disabled: bool = True,
+    idle_timeout: int | None = None,
 ) -> str:
     """创建并运行一个新的沙箱容器，返回容器 ID"""
     payload = {
@@ -79,6 +80,8 @@ async def run_sandbox(
         "cpu_quota": cpu_quota,
         "network_disabled": network_disabled
     }
+    if idle_timeout is not None:
+        payload["idle_timeout"] = idle_timeout
     resp = await _sandbox_request("POST", "/containers/run", json=payload)
     data = resp.json()
     container_id = data.get("data", {}).get("container_id")

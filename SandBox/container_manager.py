@@ -41,13 +41,13 @@ class ContainerManager:
     def cleanup_idle_containers(self):
         """
         手动触发空闲容器清理。
-        销毁所有超过 IDLE_TIMEOUT 未活动的容器。
+        销毁所有超过各自 idle_timeout（或全局 IDLE_TIMEOUT）未活动的容器。
         """
         now = time.time()
         with self.lock:
             idle_candidates = [
                 cid for cid, info in self.containers.items()
-                if now - info["last_activity"] > config.IDLE_TIMEOUT
+                if now - info["last_activity"] > info.get("idle_timeout", config.IDLE_TIMEOUT)
             ]
         for cid in idle_candidates:
             self._destroy_container(cid, reason="idle timeout")
@@ -118,15 +118,14 @@ class ContainerManager:
         mem_limit: str = config.DEFAULT_MEM_LIMIT,
         cpu_quota: int = config.DEFAULT_CPU_QUOTA,
         network_disabled: bool = config.DEFAULT_NETWORK_DISABLED,
+        idle_timeout: int | None = None,
     ) -> Optional[str]:
         """创建并启动一个新容器，返回容器ID，若资源不足返回None"""
-        # 资源不足时尝试清理空闲容器
         if not self._prune_idle_for_capacity():
             logger.warning("No idle containers to prune, cannot create new container")
             return None
 
         try:
-            # 使用 tail -f /dev/null 保持容器运行
             container = self.docker_client.containers.create(
                 image=image,
                 command=["tail", "-f", "/dev/null"],
@@ -143,6 +142,7 @@ class ContainerManager:
                 self.containers[cid] = {
                     "last_activity": now,
                     "created_at": now,
+                    "idle_timeout": idle_timeout if idle_timeout is not None else config.IDLE_TIMEOUT,
                 }
             logger.info(f"Created container {cid}")
             return cid

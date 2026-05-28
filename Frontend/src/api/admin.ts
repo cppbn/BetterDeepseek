@@ -16,6 +16,7 @@ export interface UserRecord {
   id: number;
   username: string;
   created_at: string;
+  role: string;
 }
 
 export interface TokenUsageSummary {
@@ -99,6 +100,9 @@ export const adminApi = {
   },
   deleteUser(userId: number) {
     return apiClient.delete(`/admin/users/${userId}`, { headers: adminHeaders() });
+  },
+  updateUserRole(userId: number, role: string) {
+    return apiClient.put(`/admin/users/${userId}/role`, { role }, { headers: adminHeaders() });
   },
 
   // Token Usage

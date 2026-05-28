@@ -10,7 +10,8 @@ from ChatApp.routers.chat import PROVIDER_MAP
 from ChatApp.database import (
     get_db, get_all_model_configs_db, get_model_config_db, upsert_model_config_db,
     delete_model_config_db, reset_model_configs_db, get_all_users_db, delete_user_db,
-    get_token_usage_stats_db, get_token_usage_by_model_db, get_token_usage_by_user_db
+    get_token_usage_stats_db, get_token_usage_by_model_db, get_token_usage_by_user_db,
+    update_user_role_db
 )
 from ChatApp.providers.model_manager import refresh_models
 
@@ -46,6 +47,10 @@ class EnvValue(BaseModel):
 
 class VerifyIn(BaseModel):
     key: str
+
+
+class UserRoleUpdate(BaseModel):
+    role: str
 
 
 async def verify_admin_key(api_key: str = Security(api_key_header)):
@@ -156,6 +161,16 @@ async def delete_user(user_id: int, db: aiosqlite.Connection = Depends(get_db)):
         raise HTTPException(status_code=404, detail=f"User {user_id} not found")
     logger.info(f"Admin deleted user {user_id}")
     return {"message": f"User {user_id} deleted"}
+
+
+@router.put("/users/{user_id}/role", dependencies=[Depends(verify_admin_key)])
+async def update_user_role(user_id: int, body: UserRoleUpdate, db: aiosqlite.Connection = Depends(get_db)):
+    if body.role not in ("user", "developer"):
+        raise HTTPException(status_code=400, detail="Role must be 'user' or 'developer'")
+    if not await update_user_role_db(db, user_id, body.role):
+        raise HTTPException(status_code=404, detail=f"User {user_id} not found")
+    logger.info(f"Admin set user {user_id} role to {body.role}")
+    return {"message": f"User {user_id} role updated to {body.role}"}
 
 
 # ===================== Token Usage =====================

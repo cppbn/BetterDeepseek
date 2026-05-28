@@ -3,7 +3,6 @@
     class="bg-white border-r border-gray-200 flex flex-col shadow-sm transition-all duration-300"
     :class="collapsed ? 'w-16' : 'w-64'"
   >
-    <!-- 会话列表：折叠时只显示图标占位 -->
     <div class="flex-1 overflow-y-auto p-2 space-y-1">
       <div
         v-for="session in sessionStore.sessions"
@@ -34,8 +33,17 @@
       </div>
     </div>
 
-    <!-- 用户信息区域：折叠时只显示头像或图标 -->
     <div class="p-4 border-t border-gray-100">
+      <div v-if="authStore.user?.role === 'developer'" class="mb-2">
+        <button
+          @click="showDevSettings = true"
+          class="flex items-center gap-1.5 text-sm text-blue-600 hover:text-blue-700"
+          :class="collapsed ? 'justify-center' : ''"
+        >
+          <Cog6ToothIcon class="w-4 h-4" />
+          <span v-if="!collapsed">设置</span>
+        </button>
+      </div>
       <div v-if="!collapsed" class="flex items-center justify-between">
         <span class="text-sm font-medium text-gray-700">{{ authStore.user?.username }}</span>
         <button @click="authStore.logout" class="text-sm text-red-500 hover:text-red-600">登出</button>
@@ -45,14 +53,17 @@
         <button @click="authStore.logout" class="text-xs text-red-400 hover:text-red-500">登出</button>
       </div>
     </div>
+
+    <DevSettingsModal v-if="showDevSettings" @close="showDevSettings = false" />
   </aside>
 </template>
 
 <script setup lang="ts">
-import { onMounted } from 'vue';
-import { TrashIcon, UserCircleIcon } from '@heroicons/vue/24/outline';
+import { onMounted, ref } from 'vue';
+import { TrashIcon, UserCircleIcon, Cog6ToothIcon } from '@heroicons/vue/24/outline';
 import { useSessionStore } from '@/stores/session';
 import { useAuthStore } from '@/stores/auth';
+import DevSettingsModal from './DevSettingsModal.vue';
 
 defineProps<{
   collapsed: boolean;
@@ -60,6 +71,7 @@ defineProps<{
 
 const sessionStore = useSessionStore();
 const authStore = useAuthStore();
+const showDevSettings = ref(false);
 
 onMounted(() => {
   sessionStore.fetchSessions();

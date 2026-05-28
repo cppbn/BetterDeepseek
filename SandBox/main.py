@@ -47,6 +47,7 @@ class RunRequest(BaseModel):
     mem_limit: str = config.DEFAULT_MEM_LIMIT
     cpu_quota: int = config.DEFAULT_CPU_QUOTA
     network_disabled: bool = config.DEFAULT_NETWORK_DISABLED
+    idle_timeout: int | None = None
 
 class ExecRequest(BaseModel):
     cmd: List[str]
@@ -63,6 +64,7 @@ async def run_container(req: RunRequest = RunRequest()):
         mem_limit=req.mem_limit,
         cpu_quota=req.cpu_quota,
         network_disabled=req.network_disabled,
+        idle_timeout=req.idle_timeout,
     )
     if cid is None:
         raise HTTPException(status_code=429, detail="Resource exhausted: no idle container to prune")

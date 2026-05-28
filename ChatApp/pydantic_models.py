@@ -56,6 +56,7 @@ class ChatRequest(BaseModel):
 class UserInfo(BaseModel):
     id: int
     username: str
+    role: str = "user"
 
 class FileInfo(BaseModel):
     file_id: str
