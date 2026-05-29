@@ -99,32 +99,7 @@ async def _init_model_configs(db: aiosqlite.Connection):
     cursor = await db.execute("SELECT COUNT(*) FROM model_configs")
     count = (await cursor.fetchone())[0]
     if count == 0:
-        defaults = [
-            ("deepseek-v4-flash-thinking", "deepseek", "deepseek-v4-flash", 1, 0, 0, 1, "chat"),
-            ("deepseek-v4-pro-thinking", "deepseek", "deepseek-v4-pro", 1, 0, 0, 0, "chat"),
-            ("qwen3.6-plus-thinking", "openrouter", "qwen/qwen3.6-plus", 1, 1, 0, 0, "chat"),
-            ("kimi-k2.6-thinking", "openrouter", "moonshotai/kimi-k2.6", 1, 1, 0, 0, "chat"),
-            ("gemini-3-flash-thinking", "gemini", "gemini-3-flash", 1, 1, 1, 0, "chat"),
-            ("gemini-3.1-flash-lite-thinking", "gemini", "gemini-3.1-flash-lite", 1, 1, 1, 0, "chat"),
-            ("deepseek-v4-pro", "opencode_go", "deepseek-v4-pro", 1, 0, 0, 0, "chat"),
-            ("deepseek-v4-flash", "opencode_go", "deepseek-v4-flash", 0, 0, 0, 0, "chat"),
-            ("kimi-k2.6", "opencode_go", "kimi-k2.6", 1, 1, 0, 0, "chat"),
-            ("kimi-k2.5", "opencode_go", "kimi-k2.5", 1, 1, 0, 0, "chat"),
-            ("glm-5.1", "opencode_go", "glm-5.1", 1, 0, 0, 0, "chat"),
-            ("qwen3.6-plus", "opencode_go", "qwen3.6-plus", 1, 1, 0, 0, "chat"),
-            ("qwen3.5-plus", "opencode_go", "qwen3.5-plus", 1, 1, 0, 0, "chat"),
-            ("mimo-v2.5", "opencode_go", "mimo-v2.5", 1, 1, 1, 0, "chat"),
-            ("mimo-v2.5-pro", "opencode_go", "mimo-v2.5-pro", 1, 0, 0, 0, "chat"),
-            ("image_transcription", "openrouter", "qwen/qwen3.5-flash-02-23", 0, 0, 0, 0, "image"),
-            ("audio_transcription", "gemini", "gemini-3.1-flash-lite", 0, 0, 0, 0, "audio"),
-            ("title_generation", "deepseek", "deepseek-chat", 0, 0, 0, 0, "title"),
-        ]
-        await db.executemany(
-            "INSERT INTO model_configs (key, provider, model, thinking, accept_image, accept_audio, is_default, category) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-            defaults
-        )
-        await db.commit()
-        logger.info("Seeded default model configurations")
+        logger.info("No model configurations found; models must be synced from new-api via admin panel")
 
 
 async def _init_token_usage(db: aiosqlite.Connection):

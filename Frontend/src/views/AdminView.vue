@@ -101,9 +101,14 @@
       <div v-if="activeTab === 'models'">
         <div class="flex items-center justify-between mb-4">
           <h2 class="text-lg font-semibold">模型配置</h2>
-          <button @click="resetModels" class="px-4 py-1.5 text-sm border rounded-lg hover:bg-gray-50 text-gray-600">
-            重置默认
-          </button>
+          <div class="flex gap-2">
+            <button @click="syncModels" :disabled="syncing" class="px-4 py-1.5 text-sm border rounded-lg hover:bg-blue-50 text-blue-600 disabled:opacity-50">
+              {{ syncing ? '同步中...' : '从 new-api 同步' }}
+            </button>
+            <button @click="resetModels" class="px-4 py-1.5 text-sm border rounded-lg hover:bg-gray-50 text-gray-600">
+              重置默认
+            </button>
+          </div>
         </div>
         <div v-if="modelsLoading" class="text-gray-400">加载中...</div>
         <div v-else>
@@ -118,10 +123,10 @@
             </div>
             <div v-for="m in chatModels" :key="m.key" class="border rounded-lg p-3 mb-2">
               <div class="flex items-center justify-between mb-1">
-                <span class="font-medium text-sm">{{ m.key }}</span>
+                <span class="font-medium text-sm">{{ m.model }}</span>
                 <div class="flex gap-3">
                   <button @click="editModel(m)" class="text-xs text-blue-600 hover:underline">编辑</button>
-                  <button @click="removeModel(m.key)" class="text-xs text-red-500 hover:underline">删除</button>
+                  <button @click="removeModel(m)" class="text-xs text-red-500 hover:underline">删除</button>
                 </div>
               </div>
               <div class="text-xs text-gray-500 space-x-3">
@@ -146,10 +151,10 @@
             </div>
             <div v-for="m in specialModels" :key="m.key" class="border rounded-lg p-3 mb-2">
               <div class="flex items-center justify-between mb-1">
-                <span class="font-medium text-sm">{{ m.key }}</span>
+                <span class="font-medium text-sm">{{ m.model }}</span>
                 <div class="flex gap-3">
                   <button @click="editModel(m)" class="text-xs text-blue-600 hover:underline">编辑</button>
-                  <button @click="removeModel(m.key)" class="text-xs text-red-500 hover:underline">删除</button>
+                  <button @click="removeModel(m)" class="text-xs text-red-500 hover:underline">删除</button>
                 </div>
               </div>
               <div class="text-xs text-gray-500 space-x-3">
@@ -166,9 +171,6 @@
             <div class="bg-white rounded-xl shadow-xl p-6 w-full max-w-md">
               <h3 class="text-lg font-semibold mb-4">{{ editingModel._new ? '添加模型' : '编辑模型' }}</h3>
               <div class="space-y-3">
-                <div><label class="text-xs text-gray-500">标识 Key</label>
-                  <input v-model="editingModel.key" class="w-full border rounded px-3 py-1.5 text-sm"
-                    :disabled="!editingModel._new" /></div>
                 <div><label class="text-xs text-gray-500">提供商</label>
                    <select v-model="editingModel.provider" class="w-full border rounded px-3 py-1.5 text-sm">
                      <option v-for="p in providers" :key="p" :value="p">{{ p }}</option>
@@ -340,9 +342,8 @@ const tabs = [
 
 function keyLabel(key: string) {
   const map: Record<string, string> = {
-    DEEPSEEK_API_KEY: 'DeepSeek API 密钥',
+    NEWAPI_API_KEY: 'New API 密钥',
     TAVILY_API_KEY: 'Tavily 搜索 API 密钥',
-    OPENROUTER_API_KEY: 'OpenRouter API 密钥',
     SYSTEM_PROMPT_DEFAULT: '默认系统提示词',
     SYSTEM_PROMPT_WITH_CODE_EXEC: '代码执行系统提示词',
   };
@@ -406,9 +407,24 @@ const models = ref<ModelConfig[]>([]);
 const editingModel = ref<(ModelConfig & { _new?: boolean }) | null>(null);
 const modelsLoading = ref(false);
 const providers = ref<string[]>([]);
+const syncing = ref(false);
 
-const chatModels = computed(() => models.value.filter(m => m.category === 'chat'));
-const specialModels = computed(() => models.value.filter(m => m.category !== 'chat'));
+const chatModels = computed(() =>
+  models.value
+    .filter(m => m.category === 'chat')
+    .sort((a, b) => {
+      if (a.provider !== b.provider) return a.provider.localeCompare(b.provider);
+      return a.model.localeCompare(b.model);
+    })
+);
+const specialModels = computed(() =>
+  models.value
+    .filter(m => m.category !== 'chat')
+    .sort((a, b) => {
+      if (a.provider !== b.provider) return a.provider.localeCompare(b.provider);
+      return a.model.localeCompare(b.model);
+    })
+);
 
 async function loadModels() {
   modelsLoading.value = true;
@@ -434,20 +450,32 @@ function editModel(m: ModelConfig) {
 async function saveModel() {
   if (!editingModel.value) return;
   try {
+    if (editingModel.value._new) {
+      editingModel.value.key = `${editingModel.value.provider}/${editingModel.value.model}`;
+    }
     await adminApi.upsertModel(editingModel.value.key, editingModel.value as ModelConfig);
     editingModel.value = null;
     await loadModels();
   } catch { alert('保存失败'); }
 }
-async function removeModel(key: string) {
-  if (!confirm(`确定删除模型 "${key}"？`)) return;
-  try { await adminApi.deleteModel(key); await loadModels(); }
+async function removeModel(m: ModelConfig) {
+  if (!confirm(`确定删除模型 "${m.model}"？`)) return;
+  try { await adminApi.deleteModel(m.key); await loadModels(); }
   catch { alert('删除失败'); }
 }
 async function resetModels() {
   if (!confirm('确定重置为默认模型配置？当前所有模型配置将被删除。')) return;
   try { await adminApi.resetModels(); await loadModels(); }
   catch { alert('重置失败'); }
+}
+async function syncModels() {
+  syncing.value = true;
+  try {
+    const { data } = await adminApi.syncModels();
+    alert(data.message);
+    await loadModels();
+  } catch { alert('同步失败，请检查 new-api 是否运行'); }
+  finally { syncing.value = false; }
 }
 
 // ===== 用户 =====

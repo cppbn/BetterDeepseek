@@ -25,20 +25,8 @@ from ChatApp.routers.sessions import running_sandboxes, aiolock
 
 from ChatApp.providers.models import supported_models
 
-from ChatApp.providers.deepseek import DeepSeekProvider
-from ChatApp.providers.openrouter import OpenRouterProvider
-from ChatApp.providers.gemini import GeminiProvider
-from ChatApp.providers.opencode_go import OpenCodeGoProvider
+from ChatApp.providers.newapi import NewApiProvider
 from ChatApp.providers.model_manager import get_title_model
-
-from ChatApp.providers.llm_provider import LLMProvider
-
-PROVIDER_MAP = {
-    "deepseek": lambda: DeepSeekProvider(api_key=config.DEEPSEEK_API_KEY),
-    "openrouter": lambda: OpenRouterProvider(api_key=config.OPENROUTER_API_KEY),
-    "gemini": lambda: GeminiProvider(api_key=config.GEMINI_API_KEY),
-    "opencode_go": lambda: OpenCodeGoProvider(api_key=config.OPENCODE_GO_API_KEY),
-}
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/sessions/{session_id}/chat", tags=["chat"])
@@ -50,7 +38,7 @@ TITLE_MAX_LENGTH = 40
 async def _build_attachment_content_parts(
     attachments: list[dict],
     model_info: dict,
-    llm_provider: "LLMProvider",
+    llm_provider: "NewApiProvider",
 ) -> list[dict]:
     """将附件中模型支持的图片/音频编码为多模态 content parts 列表。
 
@@ -85,7 +73,7 @@ async def _enrich_history_multimodal(
     history: list,
     attachment_map: dict[int, list[dict]],
     model_info: dict,
-    llm_provider: "LLMProvider",
+    llm_provider: "NewApiProvider",
 ) -> list[dict[str, Any]]:
     """将历史用户消息中附带的图片/音频编码为多模态 content 数组。
 
@@ -186,7 +174,7 @@ async def build_messages_for_llm(
     final_message: str,
     model_info: dict,
     enable_code_exec: bool,
-    llm_provider: "LLMProvider",
+    llm_provider: "NewApiProvider",
     dev_settings: dict | None = None,
 ) -> list[dict[str, Any]]:
     """一次性构建完整的 LLM 消息列表。
@@ -231,8 +219,10 @@ async def build_messages_for_llm(
 async def generate_session_title(session_id: str, user_msg: str, assistant_reply: str) -> str | None:
     """生成会话标题并保存到数据库，返回标题文本或 None"""
     try:
-        provider = DeepSeekProvider(api_key=config.DEEPSEEK_API_KEY)
+        provider = NewApiProvider(api_key=config.NEWAPI_API_KEY, base_url=config.NEWAPI_BASE_URL)
         title_model = await get_title_model()
+        if not title_model:
+            return None
         prompt = (
             f"Generate a concise title (6 words or fewer) for this conversation. "
             f"Reply with only the title, no quotes, no punctuation.\n\n"
@@ -240,9 +230,7 @@ async def generate_session_title(session_id: str, user_msg: str, assistant_reply
         )
         payload = provider.build_payload(
             model=title_model,
-            messages=provider.convert_messages_to_provider_format([
-                {"role": "user", "content": prompt}
-            ]),
+            messages=[{"role": "user", "content": prompt}],
             stream=False,
             thinking=False,
         )
@@ -283,7 +271,7 @@ async def chat_stream(
         model_info = supported_models["default"]
     else:
         model_info = next(iter(supported_models.values()))
-    llm_provider = PROVIDER_MAP[model_info["provider"]]()
+    llm_provider = NewApiProvider(api_key=config.NEWAPI_API_KEY, base_url=config.NEWAPI_BASE_URL)
 
     # 获取历史消息
     history = await get_messages_db(db, session_id, current_user["id"])
@@ -446,12 +434,11 @@ async def chat_stream(
 
                 reasoning_content = ""
                 content = ""
-                thought_signature: Optional[str] = None
 
                 headers = llm_provider.get_headers()
 
                 payload = llm_provider.build_payload(
-                    model=model_info["model"],
+                    model=f"{model_info['provider']}/{model_info['model']}",
                     messages=llm_provider.convert_messages_to_provider_format(messages_for_llm),
                     tools=tools_for_llm,
                     thinking=model_info["thinking"],
@@ -482,8 +469,6 @@ async def chat_stream(
                                 yield f"data: {json.dumps({'type': 'reasoning_content', 'content': event['data']})}\n\n"
                             elif event["type"] == "tool_calls_complete":
                                 current_tool_calls: list = event["data"]
-                            elif event["type"] == "thought_signature":
-                                thought_signature = event["data"]
                             elif event["type"] == "usage":
                                 usage_data = event["data"]
                                 total_usage["prompt_tokens"] += usage_data.get("prompt_tokens", 0)
@@ -500,8 +485,6 @@ async def chat_stream(
                         "content": content if content else None,
                         "tool_calls": current_tool_calls,
                     }
-                    if thought_signature:
-                        assistant_msg["thought_signature"] = thought_signature
                     messages_for_llm.append(assistant_msg)
                     if reasoning_content:
                         await save_message_db(db, session_id, next_seq, last_msg_idx + 1, "assistant", "reasoning", reasoning_content)
@@ -617,7 +600,7 @@ async def chat_stream(
                     if total_usage.get("prompt_tokens") or total_usage.get("completion_tokens"):
                         try:
                             await save_token_usage_db(
-                                db, session_id, current_user["id"], model_info["model"],
+                                db, session_id, current_user["id"], f"{model_info['provider']}/{model_info['model']}",
                                 total_usage["prompt_tokens"], total_usage["completion_tokens"]
                             )
                         except Exception:

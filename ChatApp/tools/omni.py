@@ -1,9 +1,8 @@
 import httpx
 import base64
-import json
 import logging
 import ChatApp.config as config
-from ChatApp.providers.model_manager import get_image_model_info, get_audio_model_info
+from ChatApp.providers.model_manager import get_image_model, get_audio_model
 
 logger = logging.getLogger(__name__)
 
@@ -16,67 +15,16 @@ AUDIO_MIME_MAP = {
 
 
 async def inquire_image(question: str, image: bytes, image_format: str) -> str:
-    info = await get_image_model_info()
-    return await _transcribe(info, question, image=image, image_format=image_format)
+    model = await get_image_model()
+    return await _transcribe(model, question, image=image, image_format=image_format)
 
 
 async def inquire_audio(question: str, audio: bytes, audio_format: str) -> str:
-    info = await get_audio_model_info()
-    return await _transcribe(info, question, audio=audio, audio_format=audio_format)
+    model = await get_audio_model()
+    return await _transcribe(model, question, audio=audio, audio_format=audio_format)
 
 
-async def _transcribe(info: dict, question: str, *, image=None, image_format=None, audio=None, audio_format=None) -> str:
-    provider = info.get("provider", "openrouter")
-    model = info["model"]
-
-    if provider == "gemini":
-        return await _call_gemini(model, question, image=image, image_format=image_format, audio=audio, audio_format=audio_format)
-    else:
-        return await _call_openai_compat(model, question, image=image, image_format=image_format, audio=audio, audio_format=audio_format)
-
-
-# ── Gemini provider ─────────────────────────────────────
-
-def _build_gemini_payload(model: str, question: str, *, image=None, image_format=None, audio=None, audio_format=None) -> dict:
-    parts: list = [{"text": question}]
-
-    if image is not None:
-        image_b64 = base64.b64encode(image).decode()
-        mime = f"image/{image_format}"
-        parts.append({"inlineData": {"mimeType": mime, "data": image_b64}})
-
-    if audio is not None:
-        audio_b64 = base64.b64encode(audio).decode()
-        mime = AUDIO_MIME_MAP.get(audio_format, f"audio/{audio_format}")
-        parts.append({"inlineData": {"mimeType": mime, "data": audio_b64}})
-
-    return {
-        "contents": [{"parts": parts}]
-    }
-
-
-def _extract_gemini_text(response: httpx.Response) -> str:
-    try:
-        return response.json()["candidates"][0]["content"]["parts"][0]["text"]
-    except Exception:
-        return f"Error: {response.text}"
-
-
-async def _call_gemini(model: str, question: str, **kwargs) -> str:
-    payload = _build_gemini_payload(model, question, **kwargs)
-    headers = {
-        "x-goog-api-key": config.GEMINI_API_KEY,
-        "Content-Type": "application/json",
-    }
-    url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
-    async with httpx.AsyncClient(timeout=60.0) as client:
-        response = await client.post(url, headers=headers, json=payload)
-    return _extract_gemini_text(response)
-
-
-# ── OpenAI-compatible provider (OpenRouter, DeepSeek) ────
-
-def _build_openai_payload(model: str, question: str, *, image=None, image_format=None, audio=None, audio_format=None) -> dict:
+def _build_payload(model: str, question: str, *, image=None, image_format=None, audio=None, audio_format=None) -> dict:
     content: list = [{"type": "text", "text": question}]
 
     if image is not None:
@@ -88,9 +36,13 @@ def _build_openai_payload(model: str, question: str, *, image=None, image_format
 
     if audio is not None:
         audio_b64 = base64.b64encode(audio).decode()
+        mime = AUDIO_MIME_MAP.get(audio_format, f"audio/{audio_format}")
+        fmt = mime.split("/")[-1]
+        fmt_map = {"mpeg": "mp3", "mp4": "m4a"}
+        fmt = fmt_map.get(fmt, fmt)
         content.append({
             "type": "input_audio",
-            "input_audio": {"data": audio_b64, "format": audio_format}
+            "input_audio": {"data": audio_b64, "format": fmt}
         })
 
     return {
@@ -99,20 +51,20 @@ def _build_openai_payload(model: str, question: str, *, image=None, image_format
     }
 
 
-def _extract_openai_text(response: httpx.Response) -> str:
+def _extract_text(response: httpx.Response) -> str:
     try:
         return response.json()["choices"][0]["message"]["content"]
     except Exception:
         return f"Error: {response.text}"
 
 
-async def _call_openai_compat(model: str, question: str, **kwargs) -> str:
-    payload = _build_openai_payload(model, question, **kwargs)
+async def _transcribe(model: str, question: str, **kwargs) -> str:
+    payload = _build_payload(model, question, **kwargs)
     headers = {
-        "Authorization": f"Bearer {config.OPENROUTER_API_KEY}",
+        "Authorization": f"Bearer {config.NEWAPI_API_KEY}",
         "Content-Type": "application/json",
     }
-    url = "https://openrouter.ai/api/v1/chat/completions"
+    url = f"{config.NEWAPI_BASE_URL}/chat/completions"
     async with httpx.AsyncClient(timeout=60.0) as client:
         response = await client.post(url, headers=headers, json=payload)
-    return _extract_openai_text(response)
+    return _extract_text(response)

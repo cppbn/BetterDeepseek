@@ -88,6 +88,9 @@ export const adminApi = {
   resetModels() {
     return apiClient.post('/admin/models/reset', null, { headers: adminHeaders() });
   },
+  syncModels() {
+    return apiClient.post<{ message: string; count: number }>('/admin/models/sync', null, { headers: adminHeaders() });
+  },
 
   // Providers
   getProviders() {

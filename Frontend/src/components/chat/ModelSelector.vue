@@ -18,14 +18,14 @@
         <div class="p-2">
           <div class="text-xs font-medium text-gray-500 mb-2 px-2">选择模型</div>
           <div
-            v-for="(info, key) in visibleModels"
+            v-for="[key, info] in visibleModels"
             :key="key"
             @click="selectModel(key)"
             class="flex items-center justify-between p-2 rounded-md cursor-pointer hover:bg-gray-50 transition-colors"
             :class="{ 'bg-blue-50': selectedModel === key }"
           >
             <div class="flex-1">
-              <div class="font-medium text-sm">{{ key }}</div>
+              <div class="font-medium text-sm">{{ info.model }}</div>
               <div class="text-xs text-gray-500 flex items-center gap-2 mt-0.5">
                 <span>{{ info.provider }}</span>
                 <span v-if="info.accept_image" class="flex items-center gap-0.5">
@@ -71,14 +71,18 @@ const selectedModel = computed({
   set: (val) => emit('update:modelValue', val),
 });
 
-const currentModelName = computed(() => selectedModel.value);
+const currentModelName = computed(() => {
+  const info = props.models[selectedModel.value];
+  return info?.model || selectedModel.value;
+});
 
 const visibleModels = computed(() => {
-  const filtered: ModelsResponse = {};
-  for (const [key, info] of Object.entries(props.models)) {
-    if (key !== 'default') filtered[key] = info;
-  }
-  return filtered;
+  return Object.entries(props.models)
+    .filter(([key]) => key !== 'default')
+    .sort((a, b) => {
+      if (a[1].provider !== b[1].provider) return a[1].provider.localeCompare(b[1].provider);
+      return (a[1].model || '').localeCompare(b[1].model || '');
+    });
 });
 
 function selectModel(key: string) {

@@ -1,19 +1,19 @@
 from fastapi import APIRouter, HTTPException, status, Security, Depends, Body, Query
 from fastapi.security import APIKeyHeader
 import aiosqlite
+import httpx
 import logging
 from pydantic import BaseModel
 from typing import Optional
 
 from ChatApp import config
-from ChatApp.routers.chat import PROVIDER_MAP
 from ChatApp.database import (
     get_db, get_all_model_configs_db, get_model_config_db, upsert_model_config_db,
     delete_model_config_db, reset_model_configs_db, get_all_users_db, delete_user_db,
     get_token_usage_stats_db, get_token_usage_by_model_db, get_token_usage_by_user_db,
     update_user_role_db
 )
-from ChatApp.providers.model_manager import refresh_models
+from ChatApp.providers.model_manager import refresh_models, sync_models_from_newapi
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/admin", tags=["Admin"])
@@ -21,11 +21,8 @@ router = APIRouter(prefix="/api/admin", tags=["Admin"])
 api_key_header = APIKeyHeader(name="X-Admin-Key", auto_error=False)
 
 ALLOWED_KEYS = {
-    "DEEPSEEK_API_KEY",
+    "NEWAPI_API_KEY",
     "TAVILY_API_KEY",
-    "OPENROUTER_API_KEY",
-    "GEMINI_API_KEY",
-    "OPENCODE_GO_API_KEY",
     "SYSTEM_PROMPT_DEFAULT",
     "SYSTEM_PROMPT_WITH_CODE_EXEC",
 }
@@ -99,7 +96,17 @@ async def list_env():
 
 @router.get("/providers", dependencies=[Depends(verify_admin_key)])
 async def list_providers():
-    return {"providers": list(PROVIDER_MAP.keys())}
+    url = f"{config.NEWAPI_BASE_URL}/models"
+    headers = {"Authorization": f"Bearer {config.NEWAPI_API_KEY}"}
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            resp = await client.get(url, headers=headers)
+            resp.raise_for_status()
+            data = resp.json()
+        providers = sorted(set(m["id"].split("/")[0] for m in data.get("data", []) if "/" in m["id"]))
+    except Exception:
+        providers = []
+    return {"providers": providers}
 
 
 # ===================== Model Configs =====================
@@ -109,7 +116,7 @@ async def list_models(db: aiosqlite.Connection = Depends(get_db)):
     return await get_all_model_configs_db(db)
 
 
-@router.get("/models/{key}", dependencies=[Depends(verify_admin_key)])
+@router.get("/models/{key:path}", dependencies=[Depends(verify_admin_key)])
 async def get_model(key: str, db: aiosqlite.Connection = Depends(get_db)):
     model = await get_model_config_db(db, key)
     if not model:
@@ -117,12 +124,10 @@ async def get_model(key: str, db: aiosqlite.Connection = Depends(get_db)):
     return model
 
 
-@router.put("/models/{key}", dependencies=[Depends(verify_admin_key)])
+@router.put("/models/{key:path}", dependencies=[Depends(verify_admin_key)])
 async def upsert_model(key: str, body: ModelConfigIn, db: aiosqlite.Connection = Depends(get_db)):
     if key != body.key:
         raise HTTPException(status_code=400, detail="Key in path must match key in body")
-    if body.provider not in PROVIDER_MAP:
-        raise HTTPException(status_code=400, detail=f"Unknown provider '{body.provider}'. Available: {list(PROVIDER_MAP.keys())}")
     await upsert_model_config_db(db, body.key, body.provider, body.model,
                                   int(body.thinking), int(body.accept_image),
                                   int(body.accept_audio), int(body.is_default), body.category)
@@ -131,7 +136,7 @@ async def upsert_model(key: str, body: ModelConfigIn, db: aiosqlite.Connection =
     return {"message": f"Model '{key}' saved"}
 
 
-@router.delete("/models/{key}", dependencies=[Depends(verify_admin_key)])
+@router.delete("/models/{key:path}", dependencies=[Depends(verify_admin_key)])
 async def delete_model(key: str, db: aiosqlite.Connection = Depends(get_db)):
     if not await delete_model_config_db(db, key):
         raise HTTPException(status_code=404, detail=f"Model '{key}' not found")
@@ -146,6 +151,13 @@ async def reset_models(db: aiosqlite.Connection = Depends(get_db)):
     await refresh_models()
     logger.info("Admin reset model configs to defaults")
     return {"message": "Model configs reset to defaults"}
+
+
+@router.post("/models/sync", dependencies=[Depends(verify_admin_key)])
+async def sync_models(db: aiosqlite.Connection = Depends(get_db)):
+    count = await sync_models_from_newapi(db)
+    logger.info(f"Admin synced {count} models from new-api")
+    return {"message": f"{count} models synced from new-api", "count": count}
 
 
 # ===================== Users =====================

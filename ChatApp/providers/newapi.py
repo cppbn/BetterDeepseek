@@ -1,15 +1,22 @@
-from ChatApp.providers.llm_provider import LLMProvider
-from typing import Dict, Any
 import httpx
 import json
+import logging
+from typing import Dict, Any, AsyncGenerator
 
-class OpenCodeGoProvider(LLMProvider):
-    def __init__(self, api_key: str, base_url: str = "https://opencode.ai/zen/go/v1"):
+logger = logging.getLogger(__name__)
+
+
+class NewApiProvider:
+    def __init__(self, api_key: str, base_url: str = "http://localhost:3050/v1"):
         self.api_key = api_key
-        self.base_url = base_url
+        self.base_url = base_url.rstrip("/")
 
     def get_api_url(self) -> str:
         return f"{self.base_url}/chat/completions"
+
+    @property
+    def models_url(self) -> str:
+        return f"{self.base_url}/models"
 
     def get_headers(self) -> Dict[str, str]:
         return {
@@ -17,8 +24,16 @@ class OpenCodeGoProvider(LLMProvider):
             "Content-Type": "application/json",
         }
 
-    def build_payload(self, model, messages, tools=None, stream=True, thinking=None, **kwargs):
-        payload = {
+    def build_payload(
+        self,
+        model: str,
+        messages: list,
+        tools: list | None = None,
+        stream: bool = True,
+        thinking: bool = True,
+        **kwargs,
+    ) -> Dict[str, Any]:
+        payload: Dict[str, Any] = {
             "model": model,
             "messages": messages,
             "stream": stream,
@@ -26,9 +41,23 @@ class OpenCodeGoProvider(LLMProvider):
         if tools:
             payload["tools"] = tools
             payload["tool_choice"] = "auto"
+        if thinking:
+            payload["reasoning"] = {"enabled": True}
         return payload
 
-    async def parse_stream(self, response: httpx.Response):
+    def build_image_content(self, mime_type: str, base64_data: str) -> dict:
+        return {"type": "image_url", "image_url": {"url": f"data:{mime_type};base64,{base64_data}"}}
+
+    def build_audio_content(self, mime_type: str, base64_data: str) -> dict:
+        fmt = mime_type.split("/")[-1]
+        fmt_map = {"mpeg": "mp3", "mp4": "m4a"}
+        fmt = fmt_map.get(fmt, fmt)
+        return {"type": "input_audio", "input_audio": {"data": base64_data, "format": fmt}}
+
+    def convert_messages_to_provider_format(self, messages: list) -> list:
+        return messages
+
+    async def parse_stream(self, response: httpx.Response) -> AsyncGenerator[Dict[str, Any], None]:
         tool_calls_map: Dict[int, Dict[str, Any]] = {}
         usage = None
         async for line in response.aiter_lines():
@@ -72,17 +101,13 @@ class OpenCodeGoProvider(LLMProvider):
                                 "function": {"name": "", "arguments": ""}
                             }
                         cur = tool_calls_map[idx]
-                        if "id" in tc_delta:
+                        if "id" in tc_delta and tc_delta["id"]:
                             cur["id"] = tc_delta["id"]
                         if tc_delta.get("function"):
-                            if "name" in tc_delta["function"] and tc_delta["function"]["name"] is not None:
+                            if "name" in tc_delta["function"] and tc_delta["function"]["name"]:
                                 cur["function"]["name"] += tc_delta["function"]["name"]
-                            if "arguments" in tc_delta["function"] and tc_delta["function"]["arguments"] is not None:
+                            if "arguments" in tc_delta["function"] and tc_delta["function"]["arguments"]:
                                 cur["function"]["arguments"] += tc_delta["function"]["arguments"]
-                    yield {"type": "tool_calls_delta", "data": delta["tool_calls"]}
 
-            except json.JSONDecodeError:
+            except (json.JSONDecodeError, KeyError, IndexError):
                 continue
-
-    def convert_messages_to_provider_format(self, messages):
-        return messages
