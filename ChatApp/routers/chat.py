@@ -531,7 +531,7 @@ async def chat_stream(
                             result = f"Error: Invalid arguments JSON: {func_args_str}"
                         except Exception as e:
                             logger.error(f"Tool execution failed: {func_name}, error: {str(e)}")
-                            result = f"Error: Tool execution failed - {str(e)}"
+                            result = f"Error: Tool execution failed - {type(e).__name__}: {str(e)}"
 
                         # 判断 result 类型，构建 LLM 消息和 SSE/DB 存储内容
                         is_multimodal = isinstance(result, dict) and result.get("type") in ("image", "audio")

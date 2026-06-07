@@ -107,14 +107,21 @@ async def exec_shell(
     timeout: int = 30
 ) -> str:
     """在容器中执行 shell 命令，返回合并后的输出字符串（含 stderr）"""
-    payload = {"cmd": cmd, "timeout": timeout}
-    resp = await _sandbox_request("POST", f"/containers/{container_id}/exec", json=payload)
-    data = resp.json()
-    exec_data = data.get("data", {})
-    exit_code = exec_data.get("exit_code", -1)
-    stdout = exec_data.get("stdout", "")
-    stderr = exec_data.get("stderr", "")
-    
+    try:
+        payload = {"cmd": cmd, "timeout": timeout}
+        resp = await _sandbox_request("POST", f"/containers/{container_id}/exec", json=payload, timeout=timeout + 10)
+        data = resp.json()
+        exec_data = data.get("data", {})
+        exit_code = exec_data.get("exit_code", -1)
+        stdout = exec_data.get("stdout", "")
+        stderr = exec_data.get("stderr", "")
+    except httpx.TimeoutException:
+        return f"Error: Command timed out after {timeout}s"
+    except httpx.HTTPStatusError as e:
+        return f"Error: SandBox returned {e.response.status_code} - {e.response.text[:500]}"
+    except Exception as e:
+        return f"Error: SandBox request failed - {type(e).__name__}: {str(e)}"
+
     if exit_code != 0:
         return f"[Command failed with exit code {exit_code}]\nSTDERR:\n{stderr}\nSTDOUT:\n{stdout}"
     return stdout if stdout else "(no output)"
