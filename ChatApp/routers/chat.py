@@ -523,7 +523,15 @@ async def chat_stream(
                                 else:
                                     result = "Error: sandbox not available for export_file"
                             elif func_name in tools_registry:
-                                result = await tools_registry[func_name](**func_args)
+                                tool_task = asyncio.create_task(tools_registry[func_name](**func_args))
+                                while not tool_task.done():
+                                    while not keepalive_queue.empty():
+                                        yield keepalive_queue.get_nowait()
+                                    try:
+                                        await asyncio.wait_for(asyncio.shield(tool_task), timeout=5.0)
+                                    except asyncio.TimeoutError:
+                                        continue
+                                result = tool_task.result()
                             else:
                                 result = f"Error: Unknown tool {func_name}"
 
