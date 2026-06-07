@@ -203,7 +203,7 @@ class ContainerManager:
         except NotFound:
             return None
 
-    def exec_command(self, container_id: str, cmd: List[str], timeout: int = 30):
+    def exec_command(self, container_id: str, cmd: str, timeout: int = 30):
         """
         在容器中执行命令，返回 (exit_code, stdout, stderr)
         使用 timeout 命令包装原始命令，确保执行时长受控
@@ -216,14 +216,14 @@ class ContainerManager:
             raise ValueError(f"Container {container_id} not running")
 
         # 使用 timeout 命令包装（要求容器内存在 timeout 命令，python:3.x-slim 默认包含）
-        wrapped_cmd = ["timeout", str(timeout)] + cmd
+        wrapped_cmd = ["timeout", str(timeout), "sh", "-c", cmd]
         try:
             exec_result = container.exec_run(wrapped_cmd, stdout=True, stderr=True, demux=True)
             exit_code = exec_result.exit_code
             stdout = exec_result.output[0].decode("utf-8", errors="replace") if exec_result.output[0] else ""
             stderr = exec_result.output[1].decode("utf-8", errors="replace") if exec_result.output[1] else ""
 
-            log_cmd = " ".join(cmd)
+            log_cmd = cmd
             timestamp = datetime.now().isoformat()
             stdout_preview = stdout[:200] + "..." if len(stdout) > 200 else stdout
             stderr_preview = stderr[:100] + "..." if len(stderr) > 100 else stderr

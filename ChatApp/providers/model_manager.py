@@ -98,21 +98,15 @@ async def sync_models_from_newapi(db: aiosqlite.Connection) -> int:
 
     cursor = await db.execute("SELECT COUNT(*) FROM model_configs WHERE category = 'image'")
     if (await cursor.fetchone())[0] == 0:
-        cursor = await db.execute("SELECT provider, model FROM model_configs WHERE category = 'chat' AND provider = 'ai-studio' LIMIT 1")
+        cursor = await db.execute("SELECT provider, model FROM model_configs WHERE category = 'chat' LIMIT 1")
         row = await cursor.fetchone()
-        if not row:
-            cursor = await db.execute("SELECT provider, model FROM model_configs WHERE category = 'chat' AND provider = 'google gemini' LIMIT 1")
-            row = await cursor.fetchone()
         if row:
             await upsert_model_config_db(db, "image_transcription", row[0], row[1], False, False, False, 0, "image")
 
     cursor = await db.execute("SELECT COUNT(*) FROM model_configs WHERE category = 'audio'")
     if (await cursor.fetchone())[0] == 0:
-        cursor = await db.execute("SELECT provider, model FROM model_configs WHERE category = 'chat' AND provider = 'ai-studio' LIMIT 1")
+        cursor = await db.execute("SELECT provider, model FROM model_configs WHERE category = 'chat' LIMIT 1")
         row = await cursor.fetchone()
-        if not row:
-            cursor = await db.execute("SELECT provider, model FROM model_configs WHERE category = 'chat' AND provider = 'google gemini' LIMIT 1")
-            row = await cursor.fetchone()
         if row:
             await upsert_model_config_db(db, "audio_transcription", row[0], row[1], False, False, False, 0, "audio")
 

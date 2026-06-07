@@ -4,7 +4,7 @@ from pydantic import BaseModel
 import mimetypes
 import os
 from urllib.parse import quote
-from typing import List
+import shlex
 import logging
 from contextlib import asynccontextmanager
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
@@ -50,7 +50,7 @@ class RunRequest(BaseModel):
     idle_timeout: int | None = None
 
 class ExecRequest(BaseModel):
-    cmd: List[str]
+    cmd: str
     timeout: int = 30
 
 class ExecPythonRequest(BaseModel):
@@ -68,7 +68,7 @@ async def run_container(req: RunRequest = RunRequest()):
     )
     if cid is None:
         raise HTTPException(status_code=429, detail="Resource exhausted: no idle container to prune")
-    manager.exec_command(cid, ["mkdir", "-p", "/workspace"])
+    manager.exec_command(cid, "mkdir -p /workspace")
     return {"success": True, "data": {"container_id": cid}}
 
 @app.post("/containers/{container_id}/stop")
@@ -90,7 +90,7 @@ async def exec_command(container_id: str, req: ExecRequest):
 
 @app.post("/containers/{container_id}/exec_python")
 async def exec_python(container_id: str, req: ExecPythonRequest):
-    cmd = ["python", "-c", req.code]
+    cmd = f"python -c {shlex.quote(req.code)}"
     try:
         exit_code, stdout, stderr = manager.exec_command(container_id, cmd, req.timeout)
         return {"success": True, "data": {"exit_code": exit_code, "stdout": stdout, "stderr": stderr}}
@@ -222,7 +222,7 @@ print(json.dumps(results, ensure_ascii=False))
 async def list_files(container_id: str):
     try:
         exit_code, stdout, stderr = manager.exec_command(
-            container_id, ["python", "-c", _LIST_FILES_SCRIPT], timeout=30
+            container_id, f"python -c {shlex.quote(_LIST_FILES_SCRIPT)}", timeout=30
         )
         if exit_code != 0:
             raise HTTPException(status_code=500, detail=f"Failed to list files: {stderr}")

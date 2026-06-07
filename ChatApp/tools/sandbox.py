@@ -1,7 +1,6 @@
 import httpx
 import logging
 import json
-import shlex
 from typing import Tuple, Optional, List, Dict, Any
 from urllib.parse import unquote
 
@@ -108,7 +107,7 @@ async def exec_shell(
     timeout: int = 30
 ) -> str:
     """在容器中执行 shell 命令，返回合并后的输出字符串（含 stderr）"""
-    payload = {"cmd": shlex.split(cmd), "timeout": timeout}
+    payload = {"cmd": cmd, "timeout": timeout}
     resp = await _sandbox_request("POST", f"/containers/{container_id}/exec", json=payload)
     data = resp.json()
     exec_data = data.get("data", {})
