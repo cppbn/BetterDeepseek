@@ -7,7 +7,7 @@ logger = logging.getLogger(__name__)
 
 
 class NewApiProvider:
-    def __init__(self, api_key: str, base_url: str = "http://localhost:3050/v1"):
+    def __init__(self, api_key: str, base_url: str = "http://localhost:3000/v1"):
         self.api_key = api_key
         self.base_url = base_url.rstrip("/")
 
@@ -42,7 +42,7 @@ class NewApiProvider:
             payload["tools"] = tools
             payload["tool_choice"] = "auto"
         if thinking:
-            payload["reasoning"] = {"enabled": True}
+            payload["reasoning_effort"] = "high"
         return payload
 
     def build_image_content(self, mime_type: str, base64_data: str) -> dict:
